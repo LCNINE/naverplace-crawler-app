@@ -48,15 +48,26 @@ pnpm dist:linux      # → dist/*.AppImage, dist/*.deb (x64)
 
 ### 릴리즈 절차
 
-1. `package.json`의 `version`을 bump (예: `0.1.0` → `0.1.1`)
-2. 변경사항 커밋 후 태그 푸시
-   ```bash
-   git commit -am "chore: bump v0.1.1"
-   git tag v0.1.1
-   git push origin main --tags
-   ```
-3. `.github/workflows/release.yml`이 macOS/Windows/Linux 러너에서 빌드하여 GitHub 릴리즈 초안을 생성·publish
-4. 릴리즈가 publish되면 실행 중인 모든 클라이언트 앱이 6시간 이내(또는 다음 시작 시 5초 후)에 새 버전을 감지하여 다운로드
+세 가지 방법 중 편한 것 사용 — 어느 방법이든 GitHub Actions가 macOS/Windows/Linux 러너에서 빌드하고 GitHub 릴리즈에 publish합니다.
+
+**A. 로컬 npm 스크립트 (가장 빠름)**
+```bash
+pnpm release:patch    # 0.1.0 → 0.1.1
+pnpm release:minor    # 0.1.0 → 0.2.0
+pnpm release:major    # 0.1.0 → 1.0.0
+```
+package.json 버전을 bump하고 커밋·태그를 만들어 자동으로 push까지 합니다.
+
+**B. GitHub UI에서 수동 실행**
+Repo → Actions 탭 → "Release" 워크플로 → "Run workflow" → bump 종류 선택. 워크플로가 직접 버전 bump + 태그 생성 + 빌드까지 수행합니다.
+
+**C. 수동 태그 푸시**
+```bash
+git tag v0.1.1
+git push origin v0.1.1
+```
+
+publish 완료 후, 실행 중인 모든 클라이언트 앱은 5초 ~ 6시간 이내에 새 버전을 감지하여 다운로드합니다.
 
 ### 동작 방식
 

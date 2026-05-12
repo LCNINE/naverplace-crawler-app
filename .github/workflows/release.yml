@@ -1,15 +1,57 @@
 name: Release
 
 on:
+  # 1) 로컬에서 `pnpm release:patch` 등으로 태그를 푸시한 경우
   push:
     tags:
       - "v*"
+  # 2) GitHub UI에서 "Run workflow" 버튼으로 직접 릴리즈
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: "버전 bump 종류 (workflow_dispatch만 적용)"
+        required: true
+        type: choice
+        default: patch
+        options:
+          - patch
+          - minor
+          - major
 
 permissions:
   contents: write
 
 jobs:
+  # workflow_dispatch에서만 실행되는 버전 bump + 태그 푸시 잡
+  bump:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    outputs:
+      new_tag: ${{ steps.tag.outputs.new_tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+      - name: Bump version + tag
+        id: tag
+        run: |
+          NEW_VERSION=$(npm version ${{ inputs.bump }} -m "chore(release): v%s")
+          echo "new_tag=$NEW_VERSION" >> $GITHUB_OUTPUT
+      - name: Push commit + tag
+        run: git push --follow-tags
+
   release:
+    needs: [bump]
+    # tag push로 들어왔으면 bump 잡은 스킵되므로 의존성 무시하고 실행
+    if: always() && (github.event_name == 'push' || needs.bump.result == 'success')
     strategy:
       fail-fast: false
       matrix:
@@ -19,6 +61,9 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          # workflow_dispatch로 들어온 경우 bump 잡이 만든 최신 태그를 가져옴
+          ref: ${{ needs.bump.outputs.new_tag || github.ref }}
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4

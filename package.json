@@ -12,7 +12,10 @@
     "postinstall": "playwright install chromium",
     "dist:mac": "electron-vite build && electron-builder --mac",
     "dist:win": "electron-vite build && electron-builder --win",
-    "dist:linux": "electron-vite build && electron-builder --linux"
+    "dist:linux": "electron-vite build && electron-builder --linux",
+    "release:patch": "npm version patch -m \"chore(release): v%s\" && git push --follow-tags",
+    "release:minor": "npm version minor -m \"chore(release): v%s\" && git push --follow-tags",
+    "release:major": "npm version major -m \"chore(release): v%s\" && git push --follow-tags"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.45.0",
