@@ -5,6 +5,7 @@ import StartPage from "./pages/StartPage";
 import ProgressPage from "./pages/ProgressPage";
 import ActivityPage from "./pages/ActivityPage";
 import LoginPage from "./pages/LoginPage";
+import UpdateBadge from "./components/UpdateBadge";
 
 interface AuthUser {
   id: string;
@@ -144,6 +145,7 @@ export default function App() {
           </NavLink>
         </nav>
         <div className="ml-auto flex items-center gap-3 text-xs">
+          <UpdateBadge />
           <span className="text-slate-400">{user.email}</span>
           <button
             onClick={onSignOut}

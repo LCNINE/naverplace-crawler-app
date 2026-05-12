@@ -42,6 +42,34 @@ pnpm dist:linux      # → dist/*.AppImage, dist/*.deb (x64)
 
 배포 빌드에는 Playwright 브라우저가 `extraResources`로 함께 패키징됩니다.
 
+## 릴리즈 / 자동 업데이트
+
+본 앱은 `electron-updater`로 GitHub 릴리즈에서 자동 업데이트를 가져옵니다.
+
+### 릴리즈 절차
+
+1. `package.json`의 `version`을 bump (예: `0.1.0` → `0.1.1`)
+2. 변경사항 커밋 후 태그 푸시
+   ```bash
+   git commit -am "chore: bump v0.1.1"
+   git tag v0.1.1
+   git push origin main --tags
+   ```
+3. `.github/workflows/release.yml`이 macOS/Windows/Linux 러너에서 빌드하여 GitHub 릴리즈 초안을 생성·publish
+4. 릴리즈가 publish되면 실행 중인 모든 클라이언트 앱이 6시간 이내(또는 다음 시작 시 5초 후)에 새 버전을 감지하여 다운로드
+
+### 동작 방식
+
+- 부팅 직후 + 6시간마다 GitHub 릴리즈를 폴링
+- 새 버전 발견 → 백그라운드 다운로드 → 완료 시 다이얼로그/뱃지로 알림
+- 사용자가 "지금 재시작" 클릭 시 즉시 적용, "나중에" 시 앱 종료 시 자동 적용
+- 헤더 우측에 현재 버전과 업데이트 진행상태(다운로드 %)가 표시됨
+
+### 코드 사이닝 메모
+
+- **Windows (NSIS) / Linux (AppImage)**: 코드 사이닝 없이도 자동 다운로드 + 설치 동작
+- **macOS**: 정식 자동 설치는 Apple Developer ID로 사이닝 + Notarize된 빌드여야 가능. 미서명 빌드의 경우 업데이트 *알림*까지는 표시되지만 자동 설치는 차단됩니다 — 사용자가 새 릴리즈를 수동으로 받아 설치해야 함
+
 ## Supabase 준비
 
 ### 1) 인증 백엔드
@@ -148,11 +176,13 @@ src/
 │   ├── index.ts           앱 진입점 (윈도우/생명주기/IPC 등록)
 │   ├── auth.ts            Supabase Auth 로그인/세션 복원
 │   ├── secrets.ts         safeStorage 기반 자격증명 암호화 저장
+│   ├── updater.ts         electron-updater 기반 자동 업데이트
 │   ├── ipc/               렌더러 ↔ 메인 IPC 채널
 │   ├── crawler/           Playwright 크롤러 본체 (검색/리스트/상세/추출)
 │   └── storage/           Supabase 클라이언트·스키마·진행상황 repo
 ├── preload/index.ts       contextBridge로 화이트리스트된 채널만 노출
 └── renderer/              React UI
     ├── App.tsx            로그인 가드 + 라우터
+    ├── components/        공용 컴포넌트 (UpdateBadge 등)
     └── pages/             로그인·시작·진행상황·활동로그·환경설정
 ```

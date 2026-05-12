@@ -20,12 +20,17 @@ const validInvokeChannels = new Set([
   "auth:signOut",
   "auth:restore",
   "auth:defaultSettings",
+  "updater:check",
+  "updater:status",
+  "updater:quitAndInstall",
+  "updater:appVersion",
 ]);
 
 const validOnChannels = new Set([
   "crawler:log",
   "crawler:progress",
   "crawler:done",
+  "updater:status",
 ]);
 
 contextBridge.exposeInMainWorld("api", {

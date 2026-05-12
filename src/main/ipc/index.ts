@@ -4,6 +4,7 @@ import { registerProgressIpc } from "./progress.js";
 import { registerCrawlerIpc, stopAllSessions } from "./crawler.js";
 import { registerPrefsIpc } from "./prefs.js";
 import { registerAuthIpc } from "./auth.js";
+import { registerUpdaterIpc } from "./updater.js";
 
 export function registerIpc(mainWindow: BrowserWindow) {
   registerAuthIpc();
@@ -11,6 +12,7 @@ export function registerIpc(mainWindow: BrowserWindow) {
   registerProgressIpc();
   registerCrawlerIpc(mainWindow);
   registerPrefsIpc();
+  registerUpdaterIpc();
 }
 
 export { stopAllSessions };

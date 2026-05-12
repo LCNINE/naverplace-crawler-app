@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { registerIpc, stopAllSessions } from "./ipc/index.js";
 import { setLogTarget } from "./logger.js";
 import { getProgressRepo } from "./storage/progress.repo.js";
+import { initAutoUpdater } from "./updater.js";
 
 // __dirname polyfill for ESM
 const __filename = fileURLToPath(import.meta.url);
@@ -55,6 +56,7 @@ function createWindow() {
 
   setLogTarget(mainWindow);
   registerIpc(mainWindow);
+  initAutoUpdater(mainWindow);
 }
 
 app.whenReady().then(() => {

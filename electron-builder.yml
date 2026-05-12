@@ -4,6 +4,11 @@ directories:
   output: dist
   buildResources: resources
 asar: true
+publish:
+  - provider: github
+    owner: LCNINE
+    repo: naverplace-crawler-app
+    releaseType: release
 asarUnpack:
   - "node_modules/playwright/**"
   - "node_modules/playwright-core/**"
