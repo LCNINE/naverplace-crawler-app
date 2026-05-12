@@ -25,7 +25,7 @@ const StartSchema = z.object({
   district: z.string().optional(),
   dong: z.string().optional(),
   headful: z.boolean(),
-  slowMo: z.number().min(0).max(2000),
+  slowMo: z.number().min(0).max(60000),
   resume: z.boolean(),
 });
 

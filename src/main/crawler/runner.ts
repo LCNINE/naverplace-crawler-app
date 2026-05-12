@@ -88,12 +88,6 @@ export class CrawlSession {
   private currentListIndex = 0;
   private stopped = false;
 
-  // 자동 중단 가드 카운터
-  private consecutiveSaveFailures = 0;
-  private consecutiveEmptyDongs = 0;
-  private readonly MAX_CONSECUTIVE_SAVE_FAILURES = 10;
-  private readonly MAX_CONSECUTIVE_EMPTY_DONGS = 5;
-
   constructor(private opts: CrawlSessionOptions) {
     this.browser = new PlaywrightController({
       headful: opts.headful,
@@ -295,11 +289,6 @@ export class CrawlSession {
             });
           } catch (err) {
             const msg = err instanceof Error ? err.message : String(err);
-            // CRAWL_ABORT는 임계치 도달 시 자동 중단 신호 → 즉시 세션 전체 종료
-            if (msg.startsWith("CRAWL_ABORT:")) {
-              logger.fatal(`🛑 ${msg}`);
-              throw err;
-            }
             logger.error(
               { error: msg },
               `❌ ${city} ${district} ${dong} 처리 실패`
@@ -443,7 +432,6 @@ export class CrawlSession {
             naver_search: `${district} ${dong} ${keyword}`,
           });
           this.processed += 1;
-          this.consecutiveSaveFailures = 0;
           this.emitProgress();
           logger.info(
             `💾 저장 (#${this.processed}): ${detail.shop_name} · ${
@@ -452,17 +440,7 @@ export class CrawlSession {
           );
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
-          this.consecutiveSaveFailures += 1;
-          logger.error(
-            `❌ ${i}번째 item 저장 실패 (연속 ${this.consecutiveSaveFailures}/${this.MAX_CONSECUTIVE_SAVE_FAILURES}): ${msg}`
-          );
-          if (
-            this.consecutiveSaveFailures >= this.MAX_CONSECUTIVE_SAVE_FAILURES
-          ) {
-            throw new Error(
-              `CRAWL_ABORT: 저장이 ${this.MAX_CONSECUTIVE_SAVE_FAILURES}회 연속 실패 — 세션 자동 종료 (마지막 에러: ${msg})`
-            );
-          }
+          logger.error(`❌ ${i}번째 item 저장 실패: ${msg}`);
           if (isFatalPageError(msg)) {
             logger.warn("🔄 Fatal error, browser 통째 재시작...");
             await this.recycleBrowser("fatal during item processing").catch(
@@ -502,20 +480,9 @@ export class CrawlSession {
       await this.page.waitForTimeout(800);
     }
 
-    // 이 동에서 한 건도 저장 못 했으면 연속 빈 동 카운터 증가
     const savedInThisDong = this.processed - processedAtStart;
     if (savedInThisDong === 0) {
-      this.consecutiveEmptyDongs += 1;
-      logger.warn(
-        `🪹 ${city} ${district} ${dong}에서 저장 0건 (연속 빈 동 ${this.consecutiveEmptyDongs}/${this.MAX_CONSECUTIVE_EMPTY_DONGS})`
-      );
-      if (this.consecutiveEmptyDongs >= this.MAX_CONSECUTIVE_EMPTY_DONGS) {
-        throw new Error(
-          `CRAWL_ABORT: ${this.MAX_CONSECUTIVE_EMPTY_DONGS}개 동 연속 저장 0건 — 차단/봇감지 의심, 세션 자동 종료`
-        );
-      }
-    } else {
-      this.consecutiveEmptyDongs = 0;
+      logger.warn(`🪹 ${city} ${district} ${dong}에서 저장 0건`);
     }
 
     logger.info(

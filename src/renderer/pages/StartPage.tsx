@@ -300,15 +300,19 @@ export default function StartPage() {
           브라우저 창 표시 (headful)
         </label>
         <label className="flex items-center gap-2 text-sm text-slate-300">
-          SlowMo (ms)
+          SlowMo (ms · 1000=1초)
           <input
             type="number"
             min={0}
-            max={2000}
-            className="input w-24"
+            max={60000}
+            step={100}
+            className="input w-28"
             value={slowMo}
             onChange={(e) => setSlowMo(Number(e.target.value) || 0)}
           />
+          <span className="text-xs text-slate-500">
+            = {(slowMo / 1000).toFixed(slowMo % 1000 === 0 ? 0 : 1)}초
+          </span>
         </label>
       </div>
 
