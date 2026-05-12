@@ -1,6 +1,6 @@
 {
   "name": "crawler-app",
-  "version": "0.1.9",
+  "version": "0.1.10",
   "private": true,
   "description": "NaverPlace 크롤러 데스크톱 앱 (Electron + Playwright + Supabase)",
   "author": {
