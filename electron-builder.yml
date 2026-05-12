@@ -18,7 +18,9 @@ files:
   - "!**/node_modules/*/{CHANGELOG.md,README.md,README,readme.md,readme}"
   - "!**/node_modules/*/{test,__tests__,tests,powered-test,example,examples}"
 extraResources:
-  - from: "node_modules/playwright-core/.local-browsers"
+  # 워크플로(또는 로컬에서 PLAYWRIGHT_BROWSERS_PATH=./.playwright-browsers로 install 시)
+  # 이 위치에 브라우저가 설치되어 패키징됩니다.
+  - from: ".playwright-browsers"
     to: "playwright-browsers"
     filter: ["**/*"]
 mac:
@@ -38,6 +40,7 @@ win:
       arch: [x64]
 linux:
   category: Utility
+  maintainer: "LCNINE <wndtlr1024@gmail.com>"
   target:
     - target: AppImage
       arch: [x64]

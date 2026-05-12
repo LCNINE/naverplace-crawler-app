@@ -1,6 +1,7 @@
 node_modules/
 out/
 dist/
+.playwright-browsers/
 .DS_Store
 .vscode/
 *.log
