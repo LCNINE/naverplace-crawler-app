@@ -58,11 +58,6 @@ jobs:
         os: [macos-latest, windows-latest, ubuntu-latest]
     runs-on: ${{ matrix.os }}
 
-    # Playwright 브라우저를 프로젝트 내 .playwright-browsers 폴더에 설치하여
-    # electron-builder 의 extraResources 가 그대로 패키징할 수 있게 한다.
-    env:
-      PLAYWRIGHT_BROWSERS_PATH: ${{ github.workspace }}/.playwright-browsers
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -81,13 +76,9 @@ jobs:
           node-version: 20
           cache: pnpm
 
-      # postinstall 단계의 `playwright install chromium` 이 이중 다운로드 하지 않도록
-      # 의존성 설치 단계에선 브라우저 다운로드를 스킵하고 다음 스텝에서 명시적으로 설치한다.
+      # Chromium 번들 제거 — 빌드 시 다운로드 불필요. 첫 실행 시 사용자 환경에 설치됨.
       - name: Install dependencies
         run: pnpm install --frozen-lockfile --ignore-scripts
-
-      - name: Install Playwright browsers (chromium)
-        run: pnpm exec playwright install chromium
 
       - name: Build & Publish (macOS)
         if: matrix.os == 'macos-latest'

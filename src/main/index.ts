@@ -10,10 +10,11 @@ import { initAutoUpdater } from "./updater.js";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
-// Packaged 환경에서 Playwright 브라우저 경로 지정
+// Packaged 환경에서는 Chromium을 번들하지 않고 userData 아래에 첫 실행 시 다운로드한다.
+// (실제 다운로드/실행 파일 경로 해석은 src/main/crawler/core/browser.ts 의 ensureChromium 에서 수행)
 if (app.isPackaged) {
   process.env.PLAYWRIGHT_BROWSERS_PATH = join(
-    process.resourcesPath,
+    app.getPath("userData"),
     "playwright-browsers"
   );
 }

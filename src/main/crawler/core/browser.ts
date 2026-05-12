@@ -6,8 +6,175 @@ import {
   LaunchOptions,
 } from "playwright";
 import { app } from "electron";
+import ProgressBar from "electron-progressbar";
+import { spawn } from "node:child_process";
+import { existsSync, mkdirSync, readdirSync } from "node:fs";
+import { createRequire } from "node:module";
 import { join } from "node:path";
 import type { Logger } from "../logging/logger.js";
+
+/**
+ * 사용자 환경의 Chromium 실행 파일 경로를 찾는다.
+ * `PLAYWRIGHT_BROWSERS_PATH/chromium-XXXX/<platform>/...` 구조.
+ */
+function findChromiumExecutable(browsersRoot: string): string | undefined {
+  if (!existsSync(browsersRoot)) return undefined;
+
+  let chromiumDir: string | undefined;
+  try {
+    chromiumDir = readdirSync(browsersRoot).find((e) =>
+      e.startsWith("chromium-")
+    );
+  } catch {
+    return undefined;
+  }
+  if (!chromiumDir) return undefined;
+
+  const versionedDir = join(browsersRoot, chromiumDir);
+  let exe: string;
+  switch (process.platform) {
+    case "win32":
+      exe = join(versionedDir, "chrome-win64", "chrome.exe");
+      if (!existsSync(exe)) {
+        const alt = join(versionedDir, "chrome-win", "chrome.exe");
+        if (existsSync(alt)) exe = alt;
+      }
+      break;
+    case "darwin":
+      exe = join(
+        versionedDir,
+        "chrome-mac",
+        "Chromium.app",
+        "Contents",
+        "MacOS",
+        "Chromium"
+      );
+      break;
+    default:
+      exe = join(versionedDir, "chrome-linux", "chrome");
+  }
+
+  return existsSync(exe) ? exe : undefined;
+}
+
+/**
+ * Playwright CLI 를 ELECTRON_RUN_AS_NODE 모드로 실행해 chromium 을 다운로드한다.
+ * Electron 바이너리를 순수 node 처럼 사용하므로 외부 node/npm 설치 불필요.
+ */
+function spawnPlaywrightInstall(
+  browsersRoot: string,
+  log: Logger
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    let cliPath: string;
+    try {
+      const req = createRequire(import.meta.url);
+      // playwright/cli.js 는 entry — packaged 환경에서도 require.resolve 로 잡힘
+      cliPath = req.resolve("playwright/cli");
+    } catch (e) {
+      reject(
+        new Error(
+          `playwright CLI 경로 해석 실패: ${e instanceof Error ? e.message : String(e)}`
+        )
+      );
+      return;
+    }
+
+    log.info({ cliPath, browsersRoot }, "▶ playwright install chromium 시작");
+
+    const child = spawn(process.execPath, [cliPath, "install", "chromium"], {
+      env: {
+        ...process.env,
+        PLAYWRIGHT_BROWSERS_PATH: browsersRoot,
+        ELECTRON_RUN_AS_NODE: "1",
+      },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+
+    child.stdout?.on("data", (d: Buffer) => {
+      const text = d.toString().trim();
+      if (text) log.info({ stdout: text }, "playwright install");
+    });
+    child.stderr?.on("data", (d: Buffer) => {
+      const text = d.toString().trim();
+      if (text) log.warn({ stderr: text }, "playwright install");
+    });
+    child.on("error", reject);
+    child.on("exit", (code) => {
+      if (code === 0) resolve();
+      else reject(new Error(`playwright install exited with code ${code}`));
+    });
+  });
+}
+
+/**
+ * Chromium 이 설치되어 있으면 경로 반환, 없으면 다운로드 후 경로 반환.
+ * - dev 모드: PLAYWRIGHT_BROWSERS_PATH 미설정이면 default 경로(`~/.cache/ms-playwright`) 사용
+ * - packaged: userData/playwright-browsers 에 설치
+ *
+ * 다운로드 시 electron-progressbar 로 indeterminate UI 를 띄워 사용자에게 알림.
+ */
+async function ensureChromium(log: Logger): Promise<string | undefined> {
+  const browsersRoot =
+    process.env.PLAYWRIGHT_BROWSERS_PATH ||
+    (app.isPackaged
+      ? join(app.getPath("userData"), "playwright-browsers")
+      : undefined);
+
+  // dev 환경 + env 미설정이면 Playwright 의 기본 동작에 맡김 (executablePath 미지정)
+  if (!browsersRoot) return undefined;
+
+  // 경로 강제 동기화 — 호출 시점에 한 번 더 보장
+  process.env.PLAYWRIGHT_BROWSERS_PATH = browsersRoot;
+
+  const existing = findChromiumExecutable(browsersRoot);
+  if (existing) {
+    log.info({ exePath: existing }, "✅ 기존 Chromium 사용");
+    return existing;
+  }
+
+  log.warn({ browsersRoot }, "⚠️ Chromium 미설치 — 다운로드 시작");
+  mkdirSync(browsersRoot, { recursive: true });
+
+  const progressBar = new ProgressBar({
+    indeterminate: true,
+    text: "Chromium 다운로드 중...",
+    detail:
+      "첫 실행에 필요한 브라우저(약 150MB)를 받고 있습니다. 잠시만 기다려 주세요.",
+    closeOnComplete: true,
+    browserWindow: {
+      webPreferences: { nodeIntegration: false, contextIsolation: true },
+    },
+  });
+
+  try {
+    await spawnPlaywrightInstall(browsersRoot, log);
+  } catch (e) {
+    progressBar.close();
+    log.error(
+      { error: e instanceof Error ? e.message : String(e) },
+      "❌ Chromium 다운로드 실패"
+    );
+    throw e;
+  }
+
+  try {
+    progressBar.setCompleted();
+  } catch {
+    /* ignore */
+  }
+
+  const exePath = findChromiumExecutable(browsersRoot);
+  if (!exePath) {
+    log.error(
+      { browsersRoot },
+      "❌ 다운로드 후에도 Chromium 실행 파일을 찾지 못함"
+    );
+    return undefined;
+  }
+  log.info({ exePath }, "✅ Chromium 다운로드 완료");
+  return exePath;
+}
 
 export interface BrowserController {
   launch(): Promise<void>;
@@ -68,6 +235,7 @@ export class PlaywrightController implements BrowserController {
   async launch() {
     if (this.persistentContext || this.browser) return;
     const launchArgs = DEFAULT_LAUNCH_ARGS;
+    const executablePath = await ensureChromium(this.opts.log);
 
     if (this.opts.persistent) {
       this.persistentContext = await chromium.launchPersistentContext(
@@ -78,10 +246,11 @@ export class PlaywrightController implements BrowserController {
           args: launchArgs,
           viewport: { width: 1400, height: 900 },
           userAgent: DEFAULT_USER_AGENT,
+          ...(executablePath ? { executablePath } : {}),
         }
       );
       this.opts.log.info(
-        { userDataDir: this.opts.userDataDir },
+        { userDataDir: this.opts.userDataDir, executablePath },
         "browser.launchPersistent"
       );
     } else {
@@ -89,9 +258,10 @@ export class PlaywrightController implements BrowserController {
         headless: !this.opts.headful,
         slowMo: this.opts.slowMo,
         args: launchArgs,
+        ...(executablePath ? { executablePath } : {}),
       };
       this.browser = await chromium.launch(launchOpts);
-      this.opts.log.info("browser.launch");
+      this.opts.log.info({ executablePath }, "browser.launch");
     }
   }
 

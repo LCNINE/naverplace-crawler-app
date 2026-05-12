@@ -17,12 +17,8 @@ files:
   - "resources/**/*"
   - "!**/node_modules/*/{CHANGELOG.md,README.md,README,readme.md,readme}"
   - "!**/node_modules/*/{test,__tests__,tests,powered-test,example,examples}"
-extraResources:
-  # 워크플로(또는 로컬에서 PLAYWRIGHT_BROWSERS_PATH=./.playwright-browsers로 install 시)
-  # 이 위치에 브라우저가 설치되어 패키징됩니다.
-  - from: ".playwright-browsers"
-    to: "playwright-browsers"
-    filter: ["**/*"]
+# Chromium은 번들하지 않고 사용자 환경에서 첫 실행 시 다운로드한다.
+# (인스톨러 ~300MB → ~50MB로 축소, 첫 실행 시 ~150MB 다운로드. ensureChromium in src/main/crawler/core/browser.ts 참조)
 mac:
   category: public.app-category.developer-tools
   hardenedRuntime: false
