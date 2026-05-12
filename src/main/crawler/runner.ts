@@ -498,6 +498,33 @@ export class CrawlSession {
       logger.warn(`🪹 ${city} ${district} ${dong}에서 저장 0건`);
     }
 
+    // 동 처리 완료 시점에 "90일 동안 못 본 active 가게" → missing 판정
+    // (lifecycle 컬럼 없는 v1 테이블이면 placesRepo 가 자체적으로 no-op 처리)
+    if (
+      !this.stopped &&
+      !signal.aborted &&
+      placesRepo.markDongMissing &&
+      district &&
+      dong
+    ) {
+      try {
+        const result = await placesRepo.markDongMissing({
+          district,
+          dong,
+          daysThreshold: 90,
+        });
+        if (result.count > 0) {
+          logger.info(
+            `🪦 missing 처리: ${city} ${district} ${dong} ${result.count}건 (90일 이상 미관측)`
+          );
+        }
+      } catch (e) {
+        logger.warn(
+          `missing 판정 실패: ${e instanceof Error ? e.message : String(e)}`
+        );
+      }
+    }
+
     logger.info(
       this.stopped
         ? `🛑 중지됨 (${city} ${district} ${dong} page=${this.currentPage}, idx=${this.currentListIndex})`
