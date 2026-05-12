@@ -16,6 +16,7 @@ const validInvokeChannels = new Set([
   "prefs:setLastForm",
   "sessions:listActive",
   "logs:recent",
+  "logs:clear",
   "auth:signIn",
   "auth:signOut",
   "auth:restore",

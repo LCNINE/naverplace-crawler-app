@@ -427,6 +427,16 @@ export class CrawlSession {
             },
             logger
           );
+
+          // detail 단계 카테고리 매칭 — 리스트에선 카테고리 비어 있어 통과한 항목을
+          // detail의 category_main 으로 한 번 더 검증한다. category_main 도 비어 있으면 통과.
+          if (!matchesCategory(keyword, detail.category_main)) {
+            logger.info(
+              `🚫 detail 카테고리 미스매치 skip: "${detail.shop_name}" [${detail.category_main}] (keyword="${keyword}")`
+            );
+            continue;
+          }
+
           await placesRepo.upsert({
             ...detail,
             naver_search: `${district} ${dong} ${keyword}`,

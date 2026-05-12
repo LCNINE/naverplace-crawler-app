@@ -26,6 +26,10 @@ export function recentLogs(): LogEvent[] {
   return ring.slice();
 }
 
+export function clearLogs(): void {
+  ring.length = 0;
+}
+
 const baseLogger = pino({
   level: "debug",
   base: undefined,

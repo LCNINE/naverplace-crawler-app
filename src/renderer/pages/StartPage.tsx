@@ -97,8 +97,8 @@ export default function StartPage() {
         const res = await window.api.invoke<{ session?: PrevSession }>(
           "progress:get",
           mode === "all_korea"
-            ? { keyword, city: "", district: "", dong: "" }
-            : { keyword, city, district, dong }
+            ? { mode, keyword, city: "", district: "", dong: "" }
+            : { mode, keyword, city, district, dong }
         );
         if (cancelled) return;
         setPrev(res.session ?? null);
@@ -111,6 +111,27 @@ export default function StartPage() {
       cancelled = true;
     };
   }, [mode, keyword, city, district, dong]);
+
+  const onClearProgress = async () => {
+    if (!keyword) return;
+    const ok = window.confirm(
+      "이 검색의 저장된 진행분을 삭제하시겠습니까?\n다음 시작 시 처음부터 크롤링됩니다."
+    );
+    if (!ok) return;
+    try {
+      await window.api.invoke("progress:clear", {
+        mode,
+        keyword,
+        city: mode === "all_korea" ? "" : city,
+        district: mode === "all_korea" ? "" : district,
+        dong: mode === "all_korea" ? "" : dong,
+      });
+      setPrev(null);
+      setResume(false);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  };
 
   const onStart = async () => {
     setBusy(true);
@@ -318,15 +339,26 @@ export default function StartPage() {
 
       {prev && (
         <div className="rounded border border-indigo-500/30 bg-indigo-500/10 px-4 py-3 text-sm">
-          <div className="font-medium text-indigo-200">
-            🔄 이전 진행분 발견 ({prev.status})
-          </div>
-          <div className="mt-1 text-xs text-indigo-300/80">
-            {mode === "all_korea" && prev.city && prev.district && prev.dong
-              ? `${prev.city} ${prev.district} ${prev.dong} · `
-              : ""}
-            Page {prev.page} / {prev.listIndex}번째 · 누적 {prev.processed}건
-            완료
+          <div className="flex items-start justify-between gap-2">
+            <div>
+              <div className="font-medium text-indigo-200">
+                🔄 이전 진행분 발견 ({prev.status})
+              </div>
+              <div className="mt-1 text-xs text-indigo-300/80">
+                {mode === "all_korea" && prev.city && prev.district && prev.dong
+                  ? `${prev.city} ${prev.district} ${prev.dong} · `
+                  : ""}
+                Page {prev.page} / {prev.listIndex}번째 · 누적{" "}
+                {prev.processed}건 완료
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={onClearProgress}
+              className="shrink-0 rounded border border-rose-500/40 bg-rose-500/10 px-2.5 py-1 text-xs font-medium text-rose-200 hover:bg-rose-500/20"
+            >
+              🗑 처음부터
+            </button>
           </div>
           <label className="mt-2 flex items-center gap-2 text-xs text-indigo-100">
             <input

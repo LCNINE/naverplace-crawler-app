@@ -105,6 +105,15 @@ export default function ProgressPage() {
     await window.api.invoke("crawler:stop", { sessionId });
   };
 
+  const onClearLogs = async () => {
+    try {
+      await window.api.invoke("logs:clear");
+    } catch {
+      /* ignore */
+    }
+    setLogs([]);
+  };
+
   return (
     <div className="flex h-full flex-col gap-4 px-6 py-6">
       <div className="flex flex-wrap items-center gap-4 rounded border border-slate-800 bg-slate-900/60 px-4 py-3 text-sm">
@@ -153,6 +162,17 @@ export default function ProgressPage() {
             </button>
           )}
         </div>
+      </div>
+
+      <div className="flex items-center justify-between text-xs text-slate-500">
+        <span>로그 ({logs.length}건)</span>
+        <button
+          onClick={onClearLogs}
+          className="rounded border border-slate-700 bg-slate-800/60 px-2 py-1 text-slate-400 hover:border-rose-500/40 hover:text-rose-300"
+          title="화면과 메모리의 로그 버퍼 모두 비움"
+        >
+          🗑 로그 지우기
+        </button>
       </div>
 
       <div

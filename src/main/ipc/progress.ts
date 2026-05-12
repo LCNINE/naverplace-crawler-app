@@ -2,9 +2,10 @@ import { ipcMain } from "electron";
 import { z } from "zod";
 import { getProgressRepo } from "../storage/progress.repo.js";
 import { makeSessionKey } from "../types.js";
-import { recentLogs } from "../logger.js";
+import { recentLogs, clearLogs } from "../logger.js";
 
 const SessionRefSchema = z.object({
+  mode: z.enum(["single", "all_korea"]).optional(),
   keyword: z.string(),
   city: z.string(),
   district: z.string(),
@@ -32,5 +33,10 @@ export function registerProgressIpc() {
 
   ipcMain.handle("logs:recent", async () => {
     return recentLogs();
+  });
+
+  ipcMain.handle("logs:clear", async () => {
+    clearLogs();
+    return { ok: true };
   });
 }
