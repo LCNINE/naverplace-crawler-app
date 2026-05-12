@@ -7,7 +7,13 @@ const FILE = () => join(app.getPath("userData"), "secrets.json");
 
 type StoredShape = {
   encrypted: boolean;
-  data: { url?: string; anonKey?: string; serviceKey?: string; table?: string };
+  data: {
+    url?: string;
+    anonKey?: string;
+    serviceKey?: string;
+    table?: string;
+    chatWebhookUrl?: string;
+  };
 };
 
 async function readRaw(): Promise<StoredShape | null> {
@@ -53,6 +59,9 @@ export async function saveSecrets(s: Secrets): Promise<void> {
       anonKey: encrypt(s.anonKey),
       serviceKey: s.serviceKey ? encrypt(s.serviceKey) : undefined,
       table: encrypt(s.table),
+      chatWebhookUrl: s.chatWebhookUrl
+        ? encrypt(s.chatWebhookUrl)
+        : undefined,
     },
   };
   await writeRaw(payload);
@@ -67,6 +76,7 @@ export async function loadSecrets(): Promise<SecretsLoadResponse> {
       anonKey: "",
       table: "",
       hasServiceKey: false,
+      hasChatWebhook: false,
       encryptionAvailable,
     };
   }
@@ -80,6 +90,7 @@ export async function loadSecrets(): Promise<SecretsLoadResponse> {
     anonKey: decAnon,
     table: decTable,
     hasServiceKey: !!raw.data.serviceKey,
+    hasChatWebhook: !!raw.data.chatWebhookUrl,
     encryptionAvailable,
   };
 }
@@ -94,7 +105,18 @@ export async function loadFullSecrets(): Promise<Secrets | null> {
       ? decrypt(raw.data.serviceKey, raw.encrypted)
       : undefined,
     table: raw.data.table ? decrypt(raw.data.table, raw.encrypted) : "",
+    chatWebhookUrl: raw.data.chatWebhookUrl
+      ? decrypt(raw.data.chatWebhookUrl, raw.encrypted)
+      : undefined,
   };
+}
+
+/** webhook URL 만 빠르게 조회 (notifier 가 매번 호출) */
+export async function loadChatWebhookUrl(): Promise<string | undefined> {
+  const raw = await readRaw();
+  if (!raw?.data.chatWebhookUrl) return undefined;
+  const v = decrypt(raw.data.chatWebhookUrl, raw.encrypted);
+  return v && v.trim().length > 0 ? v : undefined;
 }
 
 export async function clearSecrets(): Promise<void> {

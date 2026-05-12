@@ -25,6 +25,7 @@ const validInvokeChannels = new Set([
   "updater:status",
   "updater:quitAndInstall",
   "updater:appVersion",
+  "notifier:test",
 ]);
 
 const validOnChannels = new Set([

@@ -3,6 +3,8 @@ export interface Secrets {
   anonKey: string;
   serviceKey?: string;
   table: string;
+  /** Google Chat incoming webhook URL (key + token 포함). 안전 저장. */
+  chatWebhookUrl?: string;
 }
 
 export interface SecretsLoadResponse {
@@ -11,6 +13,8 @@ export interface SecretsLoadResponse {
   table: string;
   hasServiceKey: boolean;
   encryptionAvailable: boolean;
+  /** webhook URL 자체는 노출하지 않고 설정 여부만 boolean 으로 전달 */
+  hasChatWebhook: boolean;
 }
 
 export type CrawlMode = "single" | "all_korea";

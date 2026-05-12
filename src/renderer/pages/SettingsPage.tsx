@@ -12,9 +12,11 @@ export default function SettingsPage({ onSaved, userEmail }: Props) {
   const [anonKey, setAnonKey] = useState("");
   const [serviceKey, setServiceKey] = useState("");
   const [table, setTable] = useState("");
+  const [chatWebhookUrl, setChatWebhookUrl] = useState("");
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [encryptionAvailable, setEncryptionAvailable] = useState(true);
   const [hasServiceKey, setHasServiceKey] = useState(false);
+  const [hasChatWebhook, setHasChatWebhook] = useState(false);
   const [status, setStatus] = useState<{
     kind: "idle" | "saving" | "testing" | "ok" | "error";
     msg?: string;
@@ -27,6 +29,7 @@ export default function SettingsPage({ onSaved, userEmail }: Props) {
         anonKey: string;
         table: string;
         hasServiceKey: boolean;
+        hasChatWebhook: boolean;
         encryptionAvailable: boolean;
       }>("secrets:load");
       let nextUrl = res.url;
@@ -53,6 +56,7 @@ export default function SettingsPage({ onSaved, userEmail }: Props) {
       setAnonKey(nextAnon);
       setTable(nextTable);
       setHasServiceKey(res.hasServiceKey);
+      setHasChatWebhook(res.hasChatWebhook);
       setEncryptionAvailable(res.encryptionAvailable);
     })();
   }, [userEmail]);
@@ -65,6 +69,7 @@ export default function SettingsPage({ onSaved, userEmail }: Props) {
         anonKey,
         serviceKey: serviceKey || undefined,
         table,
+        chatWebhookUrl: chatWebhookUrl || undefined,
       });
       setStatus({ kind: "ok", msg: "저장 완료" });
       onSaved();
@@ -94,6 +99,37 @@ export default function SettingsPage({ onSaved, userEmail }: Props) {
       setStatus({
         kind: "error",
         msg: `연결 실패: ${res.error ?? "unknown"}`,
+      });
+    }
+  };
+
+  const onTestWebhook = async () => {
+    if (!chatWebhookUrl) {
+      setStatus({ kind: "error", msg: "webhook URL을 먼저 입력하세요." });
+      return;
+    }
+    setStatus({ kind: "testing", msg: "webhook 전송 중..." });
+    try {
+      const res = await window.api.invoke<{
+        ok: boolean;
+        status?: number;
+        error?: string;
+      }>("notifier:test", { webhookUrl: chatWebhookUrl });
+      if (res.ok) {
+        setStatus({
+          kind: "ok",
+          msg: `webhook 테스트 성공 (HTTP ${res.status}). Google Chat 확인하세요.`,
+        });
+      } else {
+        setStatus({
+          kind: "error",
+          msg: `webhook 실패: ${res.error ?? "unknown"}`,
+        });
+      }
+    } catch (e) {
+      setStatus({
+        kind: "error",
+        msg: `webhook 예외: ${e instanceof Error ? e.message : String(e)}`,
       });
     }
   };
@@ -169,6 +205,49 @@ export default function SettingsPage({ onSaved, userEmail }: Props) {
             value={serviceKey}
             onChange={(e) => setServiceKey(e.target.value)}
           />
+        </div>
+      </details>
+
+      <details
+        className="rounded border border-slate-800 bg-slate-900/40 px-4 py-3"
+      >
+        <summary className="cursor-pointer text-sm font-medium text-slate-300">
+          알림 — Google Chat Webhook (선택){" "}
+          {hasChatWebhook && (
+            <span className="ml-2 text-xs text-emerald-400">● 저장됨</span>
+          )}
+        </summary>
+        <div className="mt-3 space-y-2">
+          <p className="text-xs text-slate-500">
+            크롤링 중 저장 10회 연속 실패(자동종료), 차단 의심, 구조 변화 의심,
+            세션 비정상 종료, 정상 완료 시 Google Chat 으로 알림이 갑니다.
+            <br />
+            URL 형식:{" "}
+            <code className="text-slate-400">
+              https://chat.googleapis.com/v1/spaces/.../messages?key=...&token=...
+            </code>
+          </p>
+          <input
+            className="input"
+            type="password"
+            placeholder={
+              hasChatWebhook
+                ? "(저장됨 — 새 값 입력 시 덮어씀)"
+                : "https://chat.googleapis.com/v1/spaces/..."
+            }
+            value={chatWebhookUrl}
+            onChange={(e) => setChatWebhookUrl(e.target.value)}
+          />
+          <div>
+            <button
+              type="button"
+              className="btn-ghost text-xs"
+              onClick={onTestWebhook}
+              disabled={!chatWebhookUrl}
+            >
+              📤 테스트 메시지 전송
+            </button>
+          </div>
         </div>
       </details>
 

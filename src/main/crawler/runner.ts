@@ -16,9 +16,15 @@ import {
 import { extractDetail } from "./naver/map.detail.js";
 import { findSearchFrameByUrl } from "./utils/selectors.js";
 import { matchesCategory } from "./utils/category-match.js";
+import { notifyChat } from "../notifier.js";
 import type { Logger } from "./logging/logger.js";
 import type { IPlaceRepo } from "./extractors/repository.js";
 import { KOREA_CITIES } from "./config/korea-data.js";
+
+// 자동 종료 / 알림 임계치
+const MAX_CONSECUTIVE_SAVE_FAILURES = 10;  // 도달 시 세션 종료 + critical 알림
+const ALERT_EMPTY_DONGS = 10;              // 알림만 (종료 X)
+const ALERT_IFRAME_MISSING = 3;            // 알림만 (종료 X)
 
 export type CrawlMode = "single" | "all_korea";
 
@@ -89,6 +95,17 @@ export class CrawlSession {
   private currentPage = 1;
   private currentListIndex = 0;
   private stopped = false;
+
+  // 알림/자동종료 카운터
+  private consecutiveSaveFailures = 0;
+  private consecutiveEmptyDongs = 0;
+  private consecutiveIframeMissing = 0;
+
+  // "이미 알림 발송함" 플래그 — 한번 true 되면 세션 종료까지 sticky.
+  // 자연 분포(시골/변두리 동) 에서도 임계 누적이 잦아 false positive 가 빈번하므로
+  // 카테고리당 세션 1회만 알림. 사용자가 정지 후 다시 시작하면 새 세션이라 다시 알림 가능.
+  private alertedEmptyDongs = false;
+  private alertedIframeMissing = false;
 
   constructor(private opts: CrawlSessionOptions) {
     this.browser = new PlaywrightController({
@@ -291,6 +308,11 @@ export class CrawlSession {
             });
           } catch (err) {
             const msg = err instanceof Error ? err.message : String(err);
+            // CRAWL_ABORT 는 임계치 도달 시 자동 중단 신호 — 위에서 이미 webhook 보냈음
+            if (msg.startsWith("CRAWL_ABORT:")) {
+              logger.fatal(`🛑 ${msg}`);
+              throw err;
+            }
             logger.error(
               { error: msg },
               `❌ ${city} ${district} ${dong} 처리 실패`
@@ -355,8 +377,42 @@ export class CrawlSession {
 
       const items = await collectListItems(this.page, logger);
       if (items.length === 0) {
-        logger.warn(`No items in page ${this.currentPage}`);
+        // 1페이지에서 0건 = iframe 못 찾았거나 selector 깨짐 의심.
+        // 단순히 그 동이 비어있을 수도 있어 즉시 알림은 보내지 않고 카운터만 증가,
+        // 누적 N회면 warning 알림 (cooldown 적용).
+        if (this.currentPage === 1) {
+          this.consecutiveIframeMissing += 1;
+          logger.warn(
+            `No items in page 1 (연속 ${this.consecutiveIframeMissing})`
+          );
+          if (
+            this.consecutiveIframeMissing >= ALERT_IFRAME_MISSING &&
+            !this.alertedIframeMissing
+          ) {
+            this.alertedIframeMissing = true;
+            await notifyChat({
+              category: "iframe_missing",
+              severity: "warning",
+              title: `구조 변화 의심: ${this.consecutiveIframeMissing}개 동 연속 0건 (page 1)`,
+              context: {
+                "검색어": keyword,
+                "최근 위치": `${city} ${district} ${dong}`,
+                "세션 ID": this.opts.sessionId,
+                "권장 조치":
+                  "list selector 또는 search iframe URL 패턴 확인 필요",
+              },
+            }).catch(() => undefined);
+          }
+        } else {
+          logger.warn(`No items in page ${this.currentPage}`);
+        }
         break;
+      }
+
+      // 1페이지에서 항목 수집 성공 → iframe 카운터만 리셋
+      // alertedIframeMissing 은 세션 끝까지 sticky (중간 회복돼도 추가 알림 X)
+      if (this.currentPage === 1) {
+        this.consecutiveIframeMissing = 0;
       }
 
       logger.info(
@@ -445,6 +501,7 @@ export class CrawlSession {
             naver_search: `${district} ${dong} ${keyword}`,
           });
           this.processed += 1;
+          this.consecutiveSaveFailures = 0;
           this.emitProgress();
           logger.info(
             `💾 저장 (#${this.processed}): ${detail.shop_name} · ${
@@ -453,7 +510,29 @@ export class CrawlSession {
           );
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
-          logger.error(`❌ ${i}번째 item 저장 실패: ${msg}`);
+          this.consecutiveSaveFailures += 1;
+          logger.error(
+            `❌ ${i}번째 item 저장 실패 (연속 ${this.consecutiveSaveFailures}/${MAX_CONSECUTIVE_SAVE_FAILURES}): ${msg}`
+          );
+
+          if (this.consecutiveSaveFailures >= MAX_CONSECUTIVE_SAVE_FAILURES) {
+            // 종료 직전 critical 알림 (await 하되 webhook 실패는 swallow)
+            await notifyChat({
+              category: "save_failures",
+              severity: "critical",
+              title: `저장 ${MAX_CONSECUTIVE_SAVE_FAILURES}회 연속 실패 — 세션 자동 종료`,
+              context: {
+                "검색어": keyword,
+                "위치": `${city} ${district} ${dong}`,
+                "세션 ID": this.opts.sessionId,
+                "마지막 에러": msg,
+              },
+            }).catch(() => undefined);
+            throw new Error(
+              `CRAWL_ABORT: 저장이 ${MAX_CONSECUTIVE_SAVE_FAILURES}회 연속 실패 — 세션 자동 종료 (마지막: ${msg})`
+            );
+          }
+
           if (isFatalPageError(msg)) {
             logger.warn("🔄 Fatal error, browser 통째 재시작...");
             await this.recycleBrowser("fatal during item processing").catch(
@@ -495,7 +574,34 @@ export class CrawlSession {
 
     const savedInThisDong = this.processed - processedAtStart;
     if (savedInThisDong === 0) {
-      logger.warn(`🪹 ${city} ${district} ${dong}에서 저장 0건`);
+      this.consecutiveEmptyDongs += 1;
+      logger.warn(
+        `🪹 ${city} ${district} ${dong}에서 저장 0건 (연속 빈 동 ${this.consecutiveEmptyDongs})`
+      );
+      // 임계치 도달 + 아직 알림 안 보낸 상태에서만 1회 알림.
+      // 이후 정상 동(저장 1건+) 발견 시 alerted 플래그 reset → 다음 누적 시 다시 알림 가능.
+      if (
+        this.consecutiveEmptyDongs >= ALERT_EMPTY_DONGS &&
+        !this.alertedEmptyDongs
+      ) {
+        this.alertedEmptyDongs = true;
+        await notifyChat({
+          category: "empty_dongs",
+          severity: "warning",
+          title: `차단 의심: ${this.consecutiveEmptyDongs}개 동 연속 저장 0건`,
+          context: {
+            "검색어": keyword,
+            "최근 위치": `${city} ${district} ${dong}`,
+            "세션 ID": this.opts.sessionId,
+            "권장 조치":
+              "이 세션에서는 더 이상 같은 알림 안 옵니다. 정지 후 SlowMo↑ 또는 IP 변경 권장.",
+          },
+        }).catch(() => undefined);
+      }
+    } else {
+      // 정상 동 만나면 카운터는 reset (다음 누적 카운트 표시용)
+      // 다만 alertedEmptyDongs 는 세션 끝까지 sticky — 중간에 회복돼도 추가 알림 X
+      this.consecutiveEmptyDongs = 0;
     }
 
     // 동 처리 완료 시점에 "90일 동안 못 본 active 가게" → missing 판정

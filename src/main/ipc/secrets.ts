@@ -14,6 +14,13 @@ const SecretsSchema = z.object({
   anonKey: z.string().min(10),
   serviceKey: z.string().optional().or(z.literal("")),
   table: z.string().min(1),
+  // Google Chat webhook URL — 비어있어도 됨
+  chatWebhookUrl: z
+    .string()
+    .url()
+    .startsWith("https://chat.googleapis.com/")
+    .optional()
+    .or(z.literal("")),
 });
 
 export function registerSecretsIpc() {
@@ -24,6 +31,7 @@ export function registerSecretsIpc() {
       anonKey: parsed.anonKey,
       serviceKey: parsed.serviceKey || undefined,
       table: parsed.table,
+      chatWebhookUrl: parsed.chatWebhookUrl || undefined,
     };
     await saveSecrets(toSave);
     return { ok: true };

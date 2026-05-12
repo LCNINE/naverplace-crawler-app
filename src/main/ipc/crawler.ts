@@ -12,6 +12,7 @@ import {
 } from "../storage/schema.js";
 import { CrawlSession } from "../crawler/runner.js";
 import { createLogger } from "../logger.js";
+import { notifyChat } from "../notifier.js";
 import {
   makeSessionKey,
   type CrawlStartPayload,
@@ -210,6 +211,7 @@ export function registerCrawlerIpc(mainWindow: BrowserWindow) {
       .then(async () => {
         const stoppedByUser = controller.signal.aborted;
         const s = session.getState();
+        const totalProcessed = baseProcessed + s.processed;
         await progressRepo
           .patch(key, {
             city: s.city,
@@ -220,11 +222,32 @@ export function registerCrawlerIpc(mainWindow: BrowserWindow) {
             dongIndex: s.dongIndex,
             page: s.page,
             listIndex: s.listIndex,
-            processed: baseProcessed + s.processed,
+            processed: totalProcessed,
             status: stoppedByUser ? "stopped" : "completed",
           })
           .catch(() => {});
         broadcast(mainWindow, "crawler:done", { sessionId, ok: true });
+
+        // 사용자가 직접 정지한 경우는 알림 X (의도적 종료),
+        // 자연스럽게 완주한 경우만 완료 알림.
+        if (!stoppedByUser) {
+          await notifyChat({
+            category: "session_completed",
+            severity: "info",
+            title: "✅ 크롤링 완료",
+            context: {
+              "검색어": parsed.keyword,
+              "모드": parsed.mode === "all_korea" ? "🌐 전국 자동 순회" : "📍 단일 지역",
+              "위치":
+                parsed.mode === "single"
+                  ? `${parsed.city ?? ""} ${parsed.district ?? ""} ${parsed.dong ?? ""}`.trim()
+                  : "전국 17개 시·도 완주",
+              "최종 누적 저장": `${totalProcessed}건`,
+              "마지막 위치": `${s.city} ${s.district} ${s.dong}`.trim(),
+              "세션 ID": sessionId,
+            },
+          }).catch(() => undefined);
+        }
       })
       .catch(async (err) => {
         const msg = err instanceof Error ? err.message : String(err);
@@ -236,6 +259,24 @@ export function registerCrawlerIpc(mainWindow: BrowserWindow) {
           ok: false,
           error: msg,
         });
+        // CRAWL_ABORT 는 runner 내부에서 이미 webhook 전송함 → 중복 전송 방지
+        if (!msg.startsWith("CRAWL_ABORT:")) {
+          await notifyChat({
+            category: "session_fatal",
+            severity: "critical",
+            title: "세션 비정상 종료",
+            context: {
+              "검색어": parsed.keyword,
+              "모드": parsed.mode,
+              "위치":
+                parsed.mode === "single"
+                  ? `${parsed.city ?? ""} ${parsed.district ?? ""} ${parsed.dong ?? ""}`.trim()
+                  : "전국",
+              "세션 ID": sessionId,
+              "에러": msg,
+            },
+          }).catch(() => undefined);
+        }
       })
       .finally(() => {
         try {

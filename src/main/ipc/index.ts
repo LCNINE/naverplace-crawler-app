@@ -5,6 +5,7 @@ import { registerCrawlerIpc, stopAllSessions } from "./crawler.js";
 import { registerPrefsIpc } from "./prefs.js";
 import { registerAuthIpc } from "./auth.js";
 import { registerUpdaterIpc } from "./updater.js";
+import { registerNotifierIpc } from "./notifier.js";
 
 export function registerIpc(mainWindow: BrowserWindow) {
   registerAuthIpc();
@@ -13,6 +14,7 @@ export function registerIpc(mainWindow: BrowserWindow) {
   registerCrawlerIpc(mainWindow);
   registerPrefsIpc();
   registerUpdaterIpc();
+  registerNotifierIpc();
 }
 
 export { stopAllSessions };
