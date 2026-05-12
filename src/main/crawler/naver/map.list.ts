@@ -5,6 +5,7 @@ import { searchFrame, findSearchFrameByUrl } from "../utils/selectors.js";
 export interface ListItem {
   index: number;
   name: string;
+  category?: string;
 }
 
 export async function collectListItems(
@@ -249,6 +250,43 @@ export async function collectListItems(
       }
 
       log.info(`Scroll complete, total ${result.length} places collected`);
+
+      // li 단위로 한 번 더 훑어서 매장명 → 카테고리 매핑을 채운다.
+      // 리스트 카드의 span.YzBgS 가 카테고리(예: "왁싱,제모"). 클릭 전 필터링용.
+      try {
+        const nameToCategory = await searchFrameElement.evaluate(() => {
+          const out: Record<string, string> = {};
+          const items = document.querySelectorAll("li.VLTHu");
+          items.forEach((li) => {
+            const nameEl = li.querySelector("span.YwYLL");
+            const catEl = li.querySelector("span.YzBgS");
+            const name = (nameEl?.textContent ?? "").replace(/\s+/g, " ").trim();
+            const category = (catEl?.textContent ?? "")
+              .replace(/\s+/g, " ")
+              .trim();
+            if (name && category && !(name in out)) {
+              out[name] = category;
+            }
+          });
+          return out;
+        });
+
+        let attached = 0;
+        for (const item of result) {
+          const cat = nameToCategory[item.name];
+          if (cat) {
+            item.category = cat;
+            attached++;
+          }
+        }
+        log.info(
+          `🏷️ category attached to ${attached}/${result.length} list items`
+        );
+      } catch (e) {
+        log.warn(
+          `category mapping failed: ${e instanceof Error ? e.message : String(e)}`
+        );
+      }
     } else {
       log.warn("Scroll container not found, trying alternative method...");
 

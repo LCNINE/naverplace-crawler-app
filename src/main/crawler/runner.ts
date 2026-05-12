@@ -15,6 +15,7 @@ import {
 } from "./naver/map.list.js";
 import { extractDetail } from "./naver/map.detail.js";
 import { findSearchFrameByUrl } from "./utils/selectors.js";
+import { matchesCategory } from "./utils/category-match.js";
 import type { Logger } from "./logging/logger.js";
 import type { IPlaceRepo } from "./extractors/repository.js";
 import { KOREA_CITIES } from "./config/korea-data.js";
@@ -383,6 +384,15 @@ export class CrawlSession {
         const item = items[i];
         if (!item.name || item.name.trim().length === 0) {
           logger.warn(`Skipping item ${i}: invalid name`);
+          continue;
+        }
+
+        // 클릭 전 카테고리 매칭 체크: 검색 키워드와 무관한 업종이면 skip.
+        // 카테고리가 없으면(undefined) 일단 통과시켜 detail 단계로 진행.
+        if (!matchesCategory(keyword, item.category)) {
+          logger.info(
+            `🚫 카테고리 미스매치 skip: "${item.name}" [${item.category}] (keyword="${keyword}")`
+          );
           continue;
         }
 
