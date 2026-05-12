@@ -74,6 +74,11 @@ export class SupabaseRepo implements IPlaceRepo {
       tags: normalize(place.tags),
       naver_place_url: naverPlaceUrl,
       naver_search: normalize(place.naver_search),
+      // instagram 은 일부 테이블(_v2 계열)에만 존재하는 신규 컬럼이라
+      // username 이 추출됐을 때만 key 자체를 포함시켜 v1 테이블 호환성을 유지한다.
+      ...(normalize(place.instagram)
+        ? { instagram: normalize(place.instagram) }
+        : {}),
       updated_at: new Date().toISOString(),
     };
 

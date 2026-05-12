@@ -11,6 +11,7 @@ export interface AppPrefs {
     dong?: string;
     headful?: boolean;
     slowMo?: number;
+    collectMenu?: boolean;
   };
 }
 

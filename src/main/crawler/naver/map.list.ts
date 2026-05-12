@@ -14,8 +14,8 @@ export async function collectListItems(
 ): Promise<ListItem[]> {
   log.info("Starting shop list collection...");
 
-  // lash_scraper_seoul.js의 성공적인 패턴으로 iframe 찾기
-  let searchFrameElement = await findSearchFrameByUrl(page);
+  // lash_scraper_seoul.js의 성공적인 패턴으로 iframe 찾기 (실패 시 frame URL 진단 로그)
+  let searchFrameElement = await findSearchFrameByUrl(page, log);
   if (!searchFrameElement) {
     log.warn("Search result iframe not found");
     return [];
@@ -105,12 +105,14 @@ export async function collectListItems(
 
           // 현재 화면에 보이는 가게 이름 요소들 찾기
           if (searchFrameElement) {
-            // 여러 셀렉터 시도 (네이버 지도 구조 변경 대응)
+            // 여러 셀렉터 시도 (네이버 지도 구조 변경 대응 — 새 버전 우선)
             const selectors = [
-              "a.place_bluelink span",  // 현재 동작하는 셀렉터
-              "span.YwYLL",             // 이전 버전
+              "span.O_Uah",              // 2026 신규 (li.p0FrU 안)
+              "a.ZLKCq span.O_Uah",      // 좀 더 한정한 버전
+              "a.place_bluelink span",   // 직전 버전
+              "span.YwYLL",              // 이전 버전
               "span[class*='name']",
-              "div[class*='name']"
+              "div[class*='name']",
             ];
             
             let currentNameSpans: any[] = [];
@@ -256,10 +258,13 @@ export async function collectListItems(
       try {
         const nameToCategory = await searchFrameElement.evaluate(() => {
           const out: Record<string, string> = {};
-          const items = document.querySelectorAll("li.VLTHu");
+          // 신규(li.p0FrU)와 구버전(li.VLTHu) 모두 지원
+          const items = document.querySelectorAll(
+            "li.p0FrU, li.VLTHu, li[class*='p0FrU'], li[class*='VLTHu']"
+          );
           items.forEach((li) => {
-            const nameEl = li.querySelector("span.YwYLL");
-            const catEl = li.querySelector("span.YzBgS");
+            const nameEl = li.querySelector("span.O_Uah, span.YwYLL");
+            const catEl = li.querySelector("span.YzBgS"); // 신규 list엔 카테고리가 없을 수 있음
             const name = (nameEl?.textContent ?? "").replace(/\s+/g, " ").trim();
             const category = (catEl?.textContent ?? "")
               .replace(/\s+/g, " ")
@@ -290,17 +295,22 @@ export async function collectListItems(
     } else {
       log.warn("Scroll container not found, trying alternative method...");
 
-      // 3. 대체 방법: a.place_bluelink[role="button"] 사용 (lash_scraper_seoul.js 패턴)
-      const placeLinks = await searchFrameElement.$$(
-        'a.place_bluelink[role="button"]'
+      // 3. 대체 방법: a.ZLKCq / a.place_bluelink[role="button"] 사용
+      let placeLinks = await searchFrameElement.$$(
+        'a.ZLKCq[role="button"]'
       );
-      log.info(`Found ${placeLinks.length} place_bluelink elements`);
+      if (placeLinks.length === 0) {
+        placeLinks = await searchFrameElement.$$(
+          'a.place_bluelink[role="button"]'
+        );
+      }
+      log.info(`Found ${placeLinks.length} place link elements (fallback)`);
 
       for (let i = 0; i < placeLinks.length; i++) {
         try {
           const link = placeLinks[i];
-          // span.YwYLL에서 매장명 추출
-          const nameSpan = await link.$("span.YwYLL");
+          // 매장명 추출 (신규: span.O_Uah, 구버전: span.YwYLL)
+          const nameSpan = await link.$("span.O_Uah, span.YwYLL");
           if (nameSpan) {
             const shopName = await nameSpan.textContent();
             if (shopName && shopName.trim().length > 0) {
@@ -362,11 +372,13 @@ export async function clickListItem(
   }
 
   try {
-    // 2026-05 네이버 지도 DOM 구조:
-    // <li class="VLTHu OW9LQ">
-    //   <a class="U70Fj k4f_J"><span class="YwYLL">가게이름</span></a>
-    // li 단위로 인덱싱 후, 그 안의 클릭 가능한 a 를 찾아 클릭한다.
+    // 네이버 지도 DOM 구조 (신규/구버전 동시 지원):
+    //   신규: <li class="p0FrU hpMQd"><a class="ZLKCq Vhvqp"><span class="O_Uah">..</span></a>
+    //   구버전: <li class="VLTHu OW9LQ"><a class="U70Fj k4f_J"><span class="YwYLL">..</span></a>
     const itemSelectors = [
+      "li.p0FrU",
+      "li.p0FrU.hpMQd",
+      "li[class*='p0FrU']",
       "li.VLTHu",
       "li.VLTHu.OW9LQ",
       "li[class*='VLTHu']",
@@ -390,8 +402,11 @@ export async function clickListItem(
       return false;
     }
 
-    // li 안의 클릭 가능한 a 후보들 — 새 클래스(U70Fj) 우선, 옛 클래스도 fallback
+    // li 안의 클릭 가능한 a 후보들 — 신규(ZLKCq) 우선, 구버전(U70Fj) fallback
     const linkCandidates = [
+      "a.ZLKCq",
+      "a.ZLKCq.Vhvqp",
+      "div.lAVyB a",
       "a.U70Fj",
       "a.U70Fj.k4f_J",
       "div.DPldi a",

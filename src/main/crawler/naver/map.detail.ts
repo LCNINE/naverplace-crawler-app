@@ -3,6 +3,7 @@ import { Logger } from "../logging/logger.js";
 import { entryFrame } from "../utils/selectors.js";
 import {
   extractDongFromAddress,
+  extractInstagramUsername,
   normalizeText,
   ScrapedPlaceInfo,
 } from "../extractors/place.js";
@@ -16,6 +17,12 @@ export async function extractDetail(
     pageNo: number;
     listIndex: number;
     shopName: string;
+    /**
+     * 대표메뉴 수집 여부. 기본 true.
+     * false면 메뉴 탭 이동/메뉴 수집 루프를 모두 skip해 가게당 5~10초 절약.
+     * 메뉴가 없는 업종(네일/왁싱/속눈썹 등)에서 강력 권장.
+     */
+    collectMenu?: boolean;
   },
   log: Logger
 ): Promise<ScrapedPlaceInfo> {
@@ -387,8 +394,10 @@ export async function extractDetail(
       .catch(() => "")
   );
 
-  // 메뉴 탭이 열려 있지 않으면 시도 (대표메뉴 수집용)
-  try {
+  // 메뉴 탭이 열려 있지 않으면 시도 (대표메뉴 수집용) — collectMenu=false면 통째 skip
+  if (ctx.collectMenu === false) {
+    log.info("⏭️ 메뉴 수집 비활성화 — 메뉴 탭 이동 skip");
+  } else try {
     // 메뉴 섹션이 보이도록 스크롤 (지연 로딩 대응)
     await f
       .locator("body")
@@ -440,7 +449,49 @@ export async function extractDetail(
   let categories: string[] = [];
   let tags: string[] = [];
   let mainMenu = "";
-  for (let attempt = 0; attempt < 3; attempt++) {
+
+  // collectMenu=false면 메뉴 수집 루프(3회 재시도) 통째 skip하고 카테고리/태그만 1회 빠르게 추출
+  if (ctx.collectMenu === false) {
+    const result = await f
+      .locator("body")
+      .evaluate(() => {
+        const clean = (text?: string | null) =>
+          (text ?? "").replace(/\s+/g, " ").trim();
+        const excluded = new Set([
+          "전화", "주소", "길찾기", "홈", "예약", "주차",
+          "영업시간", "메뉴", "대표메뉴", "사진", "리뷰",
+        ]);
+        const pickTexts = (nodes: Element[]) =>
+          nodes
+            .map((n) => clean(n.textContent))
+            .filter((t) => t.length > 0 && t.length <= 30 && !excluded.has(t));
+        const categorySelectors = [
+          "span.lnJFt", "span.YzBgS", "span.DJJ", "span.DJJl",
+          "span[class*='category']", "a[class*='category']",
+          "span[class*='Category']", "a[href*='/category']",
+        ];
+        const tagSelectors = [
+          "span[class*='tag']", "a[class*='tag']", "a[href*='/tag']",
+        ];
+        const cats = new Set<string>();
+        const tgs = new Set<string>();
+        for (const sel of categorySelectors) {
+          pickTexts(Array.from(document.querySelectorAll(sel))).forEach((t) =>
+            cats.add(t)
+          );
+        }
+        for (const sel of tagSelectors) {
+          pickTexts(Array.from(document.querySelectorAll(sel)))
+            .map((t) => t.replace(/^#/, ""))
+            .forEach((t) => tgs.add(t));
+        }
+        return { categories: Array.from(cats), tags: Array.from(tgs) };
+      })
+      .catch(() => ({ categories: [], tags: [] }));
+    categories = result.categories;
+    tags = result.tags;
+    log.info("⏭️ 메뉴 수집 비활성화 — 카테고리/태그만 1회 추출");
+  } else for (let attempt = 0; attempt < 3; attempt++) {
     // locator로 메뉴 수집 (가격이 0원이 아닌 메뉴만)
     try {
       // 전체 메뉴 페이지의 li.E2jtL 우선 시도
@@ -746,6 +797,8 @@ export async function extractDetail(
     log.warn(`⚠️ URL 추출 실패: ${e instanceof Error ? e.message : String(e)}`);
   }
 
+  const instagramUsername = extractInstagramUsername(links);
+
   const info: ScrapedPlaceInfo = {
     shop_name,
     place_id,
@@ -762,6 +815,7 @@ export async function extractDetail(
       categories.length > 1 ? categories.slice(1).join("/") : undefined,
     main_menu: mainMenu || undefined,
     tags: tags.length > 0 ? tags.join(",") : undefined,
+    instagram: instagramUsername,
     page: ctx.pageNo,
     scraped_at: new Date().toISOString(),
   };

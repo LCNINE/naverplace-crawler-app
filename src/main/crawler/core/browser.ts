@@ -6,7 +6,6 @@ import {
   LaunchOptions,
 } from "playwright";
 import { app } from "electron";
-import ProgressBar from "electron-progressbar";
 import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync } from "node:fs";
 import { createRequire } from "node:module";
@@ -142,21 +141,41 @@ async function ensureChromium(log: Logger): Promise<string | undefined> {
   log.warn({ browsersRoot }, "⚠️ Chromium 미설치 — 다운로드 시작");
   mkdirSync(browsersRoot, { recursive: true });
 
-  const progressBar = new ProgressBar({
-    indeterminate: true,
-    text: "Chromium 다운로드 중...",
-    detail:
-      "첫 실행에 필요한 브라우저(약 150MB)를 받고 있습니다. 잠시만 기다려 주세요.",
-    closeOnComplete: true,
-    browserWindow: {
-      webPreferences: { nodeIntegration: false, contextIsolation: true },
-    },
-  });
+  // electron-progressbar는 CJS 모듈이라 ESM top-level import 시 메인 프로세스가
+  // 깨질 수 있어 다운로드 직전에만 dynamic import로 로드한다.
+  // dev 모드는 PLAYWRIGHT_BROWSERS_PATH 미설정 → 이 함수에 진입조차 안 하므로 영향 없음.
+  type ProgressBarCtor = new (opts: Record<string, unknown>) => {
+    setCompleted: () => void;
+    close: () => void;
+  };
+  let progressBar: InstanceType<ProgressBarCtor> | null = null;
+  try {
+    const mod = (await import("electron-progressbar")) as {
+      default?: ProgressBarCtor;
+    };
+    const ProgressBar = (mod.default ??
+      (mod as unknown as ProgressBarCtor)) as ProgressBarCtor;
+    progressBar = new ProgressBar({
+      indeterminate: true,
+      text: "Chromium 다운로드 중...",
+      detail:
+        "첫 실행에 필요한 브라우저(약 150MB)를 받고 있습니다. 잠시만 기다려 주세요.",
+      closeOnComplete: true,
+      browserWindow: {
+        webPreferences: { nodeIntegration: false, contextIsolation: true },
+      },
+    });
+  } catch (e) {
+    log.warn(
+      { error: e instanceof Error ? e.message : String(e) },
+      "⚠️ ProgressBar UI 로드 실패 — UI 없이 다운로드 진행"
+    );
+  }
 
   try {
     await spawnPlaywrightInstall(browsersRoot, log);
   } catch (e) {
-    progressBar.close();
+    progressBar?.close();
     log.error(
       { error: e instanceof Error ? e.message : String(e) },
       "❌ Chromium 다운로드 실패"
@@ -165,7 +184,7 @@ async function ensureChromium(log: Logger): Promise<string | undefined> {
   }
 
   try {
-    progressBar.setCompleted();
+    progressBar?.setCompleted();
   } catch {
     /* ignore */
   }

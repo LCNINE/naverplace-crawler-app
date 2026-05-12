@@ -24,6 +24,8 @@ export interface CrawlStartPayload {
   dong?: string;
   headful: boolean;
   slowMo: number;
+  /** 대표메뉴 수집 여부. 기본 true. */
+  collectMenu?: boolean;
   resume: boolean;
 }
 

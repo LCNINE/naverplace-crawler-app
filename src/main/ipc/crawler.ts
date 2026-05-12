@@ -26,6 +26,7 @@ const StartSchema = z.object({
   dong: z.string().optional(),
   headful: z.boolean(),
   slowMo: z.number().min(0).max(60000),
+  collectMenu: z.boolean().optional(),
   resume: z.boolean(),
 });
 
@@ -160,6 +161,7 @@ export function registerCrawlerIpc(mainWindow: BrowserWindow) {
       dong: parsed.dong,
       headful: parsed.headful,
       slowMo: parsed.slowMo,
+      collectMenu: parsed.collectMenu,
       resumeFrom,
       placesRepo,
       logger,

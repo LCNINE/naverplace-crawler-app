@@ -52,6 +52,8 @@ export interface CrawlSessionOptions {
   dong?: string;
   headful: boolean;
   slowMo: number;
+  /** 대표메뉴 수집 여부. 기본 true. false면 가게당 5~10초 절약. */
+  collectMenu?: boolean;
   resumeFrom?: ResumeFrom;
   placesRepo: IPlaceRepo;
   logger: Logger;
@@ -424,6 +426,7 @@ export class CrawlSession {
               pageNo: this.currentPage,
               listIndex: i,
               shopName: item.name,
+              collectMenu: this.opts.collectMenu,
             },
             logger
           );

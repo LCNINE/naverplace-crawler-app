@@ -27,6 +27,7 @@ export default function StartPage() {
   const [dong, setDong] = useState(SEOUL[SEOUL_DISTRICT_NAMES[0]][0]);
   const [headful, setHeadful] = useState(true);
   const [slowMo, setSlowMo] = useState(0);
+  const [collectMenu, setCollectMenu] = useState(false);
   const [prev, setPrev] = useState<PrevSession | null>(null);
   const [resume, setResume] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -52,6 +53,7 @@ export default function StartPage() {
             dong?: string;
             headful?: boolean;
             slowMo?: number;
+            collectMenu?: boolean;
           };
         }>("prefs:get");
         const f = prefs?.lastForm;
@@ -67,6 +69,7 @@ export default function StartPage() {
           }
           if (typeof f.headful === "boolean") setHeadful(f.headful);
           if (typeof f.slowMo === "number") setSlowMo(f.slowMo);
+          if (typeof f.collectMenu === "boolean") setCollectMenu(f.collectMenu);
         }
       } catch {
         /* ignore */
@@ -146,6 +149,7 @@ export default function StartPage() {
           dong,
           headful,
           slowMo,
+          collectMenu,
         })
         .catch(() => {});
 
@@ -190,6 +194,7 @@ export default function StartPage() {
               keyword,
               headful,
               slowMo,
+              collectMenu,
               resume: !!(resume && prev),
             }
           : {
@@ -200,6 +205,7 @@ export default function StartPage() {
               dong,
               headful,
               slowMo,
+              collectMenu,
               resume: !!(resume && prev),
             };
 
@@ -334,6 +340,17 @@ export default function StartPage() {
           <span className="text-xs text-slate-500">
             = {(slowMo / 1000).toFixed(slowMo % 1000 === 0 ? 0 : 1)}초
           </span>
+        </label>
+        <label
+          className="flex items-center gap-2 text-sm text-slate-300"
+          title="네일/왁싱/속눈썹처럼 메뉴가 없는 업종이면 끄세요. 가게당 5~10초 절약됩니다."
+        >
+          <input
+            type="checkbox"
+            checked={collectMenu}
+            onChange={(e) => setCollectMenu(e.target.checked)}
+          />
+          대표메뉴 수집
         </label>
       </div>
 

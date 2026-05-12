@@ -10,38 +10,47 @@ export function entryFrame(page: Page) {
   return page.frameLocator('iframe#entryIframe, iframe[id*="entryIframe"]');
 }
 
-// lash_scraper_seoul.js의 성공적인 패턴을 기반으로 한 iframe 찾기
-export async function findSearchFrameByUrl(page: Page): Promise<Frame | null> {
+// 네이버는 검색 카테고리별로 path 가 다름 (/place/list, /lashshop/list, /restaurant/list,
+// /hairshop/list, /nailshop/list, /accommodation/list 등). 도메인 + `/list` 만으로
+// broad 매칭하고, 추가로 #searchIframe id 도 후보로 인정한다.
+function isLikelySearchFrame(url: string, title: string): boolean {
+  const isPlaceDomain =
+    url.includes("pcmap.place.naver.com") || url.includes("place.naver.com");
+  if (isPlaceDomain && url.includes("/list")) return true;
+  if (title.includes("Naver Place Search") && isPlaceDomain) return true;
+  return false;
+}
+
+export async function findSearchFrameByUrl(
+  page: Page,
+  log?: { warn: (a: unknown, b?: string) => void; debug?: (a: unknown, b?: string) => void }
+): Promise<Frame | null> {
   const frames = page.frames();
+  const seen: { url: string; name: string }[] = [];
 
   for (const frame of frames) {
     try {
       const url = frame.url();
       const title = await frame.title().catch(() => "");
+      seen.push({ url, name: frame.name() });
 
-      // 검색 결과 iframe을 찾기 위한 패턴 (솥밥은 restaurant/list 사용)
-      if (
-        url.includes("pcmap.place.naver.com/place/list") ||
-        url.includes("pcmap.place.naver.com/lashshop/list") ||
-        url.includes("pcmap.place.naver.com/restaurant/list") ||
-        url.includes("/place/list") ||
-        (title.includes("Naver Place Search") &&
-          url.includes("pcmap.place.naver.com"))
-      ) {
-        // iframe 내용이 실제로 로드되었는지 확인
+      if (isLikelySearchFrame(url, title)) {
         const hasContent = await frame
-          .evaluate(() => {
-            return document.querySelectorAll("*").length > 100;
-          })
+          .evaluate(() => document.querySelectorAll("*").length > 100)
           .catch(() => false);
-
-        if (hasContent) {
-          return frame;
-        }
+        if (hasContent) return frame;
       }
-    } catch (error) {
+    } catch {
       continue;
     }
+  }
+
+  // 매칭 실패 시 가시성을 위해 모든 frame URL 을 로그에 남긴다 — 셀렉터 갱신 진단용.
+  if (log?.warn) {
+    log.warn(
+      { frames: seen },
+      "❌ search iframe 매칭 실패 — 현재 페이지의 모든 frame URL 확인"
+    );
   }
 
   return null;

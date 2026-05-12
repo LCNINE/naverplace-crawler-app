@@ -11,6 +11,7 @@ const LastFormSchema = z
     dong: z.string().optional(),
     headful: z.boolean().optional(),
     slowMo: z.number().optional(),
+    collectMenu: z.boolean().optional(),
   })
   .strict();
 
