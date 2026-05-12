@@ -10,7 +10,7 @@ import ProgressBar from "electron-progressbar";
 import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync } from "node:fs";
 import { createRequire } from "node:module";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import type { Logger } from "../logging/logger.js";
 
 /**
@@ -69,8 +69,14 @@ function spawnPlaywrightInstall(
     let cliPath: string;
     try {
       const req = createRequire(import.meta.url);
-      // playwright/cli.js 는 entry — packaged 환경에서도 require.resolve 로 잡힘
-      cliPath = req.resolve("playwright/cli");
+      // playwright 의 package.json exports 필드에 './cli' 가 등록되어 있지 않아
+      // require.resolve('playwright/cli') 는 ERR_PACKAGE_PATH_NOT_EXPORTED 로 실패함.
+      // package.json 은 exports 에 등록되어 있으니 그걸로 패키지 루트를 잡고 cli.js 를 직접 가리킨다.
+      const pkgJsonPath = req.resolve("playwright/package.json");
+      cliPath = join(dirname(pkgJsonPath), "cli.js");
+      if (!existsSync(cliPath)) {
+        throw new Error(`playwright cli.js not found at ${cliPath}`);
+      }
     } catch (e) {
       reject(
         new Error(
