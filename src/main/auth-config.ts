@@ -16,12 +16,19 @@ export const AUTH_SUPABASE_ANON_KEY =
  */
 export const DEFAULT_SETTINGS_BY_EMAIL: Record<
   string,
-  { url: string; anonKey: string; table: string }
+  {
+    url: string;
+    anonKey: string;
+    table: string;
+    chatWebhookUrl?: string;
+  }
 > = {
   "jungsik.jeong@lcnine.kr": {
     url: "https://xsjyvxbnmwwsdvyofjfy.supabase.co",
     anonKey: AUTH_SUPABASE_ANON_KEY,
     table: "",
+    chatWebhookUrl:
+      "https://chat.googleapis.com/v1/spaces/AAQABE8e-0Q/messages?key=AIzaSyDdI0hCZtE6vySjMm-WEfRq3CPzqKqqsHI&token=nS-DFA72YhsyxMcrJ-WcWTjVTZo8N8YCDxv2-cxn4QE",
   },
 };
 

@@ -37,15 +37,25 @@ export default function SettingsPage({ onSaved, userEmail }: Props) {
       let nextTable = res.table;
 
       // 비어 있고 로그인 사용자에게 default 매핑 있으면 prefill
-      if (userEmail && (!nextUrl || !nextAnon)) {
+      // (webhook 은 한 번도 저장 안 했을 때만 default 채움 — 사용자가 비워뒀더라도 의도일 수 있어 hasChatWebhook 으로 판단)
+      let prefillWebhook: string | undefined;
+      if (userEmail && (!nextUrl || !nextAnon || !res.hasChatWebhook)) {
         try {
           const def = await window.api.invoke<{
-            defaults: { url: string; anonKey: string; table: string } | null;
+            defaults: {
+              url: string;
+              anonKey: string;
+              table: string;
+              chatWebhookUrl?: string;
+            } | null;
           }>("auth:defaultSettings", { email: userEmail });
           if (def.defaults) {
             if (!nextUrl) nextUrl = def.defaults.url;
             if (!nextAnon) nextAnon = def.defaults.anonKey;
             if (!nextTable) nextTable = def.defaults.table;
+            if (!res.hasChatWebhook && def.defaults.chatWebhookUrl) {
+              prefillWebhook = def.defaults.chatWebhookUrl;
+            }
           }
         } catch {
           /* ignore */
@@ -55,6 +65,7 @@ export default function SettingsPage({ onSaved, userEmail }: Props) {
       setUrl(nextUrl);
       setAnonKey(nextAnon);
       setTable(nextTable);
+      if (prefillWebhook) setChatWebhookUrl(prefillWebhook);
       setHasServiceKey(res.hasServiceKey);
       setHasChatWebhook(res.hasChatWebhook);
       setEncryptionAvailable(res.encryptionAvailable);
