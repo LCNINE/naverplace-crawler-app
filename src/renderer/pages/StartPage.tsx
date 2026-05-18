@@ -28,6 +28,7 @@ export default function StartPage() {
   const [headful, setHeadful] = useState(true);
   const [slowMo, setSlowMo] = useState(0);
   const [collectMenu, setCollectMenu] = useState(false);
+  const [extraCategoryKeywords, setExtraCategoryKeywords] = useState("");
   const [prev, setPrev] = useState<PrevSession | null>(null);
   const [resume, setResume] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -54,6 +55,7 @@ export default function StartPage() {
             headful?: boolean;
             slowMo?: number;
             collectMenu?: boolean;
+            extraCategoryKeywords?: string[];
           };
         }>("prefs:get");
         const f = prefs?.lastForm;
@@ -70,6 +72,9 @@ export default function StartPage() {
           if (typeof f.headful === "boolean") setHeadful(f.headful);
           if (typeof f.slowMo === "number") setSlowMo(f.slowMo);
           if (typeof f.collectMenu === "boolean") setCollectMenu(f.collectMenu);
+          if (Array.isArray(f.extraCategoryKeywords)) {
+            setExtraCategoryKeywords(f.extraCategoryKeywords.join(", "));
+          }
         }
       } catch {
         /* ignore */
@@ -140,6 +145,8 @@ export default function StartPage() {
     setBusy(true);
     setError(null);
     try {
+      const extras = parseExtraKeywords(extraCategoryKeywords);
+
       window.api
         .invoke("prefs:setLastForm", {
           mode,
@@ -150,6 +157,7 @@ export default function StartPage() {
           headful,
           slowMo,
           collectMenu,
+          extraCategoryKeywords: extras,
         })
         .catch(() => {});
 
@@ -195,6 +203,7 @@ export default function StartPage() {
               headful,
               slowMo,
               collectMenu,
+              extraCategoryKeywords: extras,
               resume: !!(resume && prev),
             }
           : {
@@ -206,6 +215,7 @@ export default function StartPage() {
               headful,
               slowMo,
               collectMenu,
+              extraCategoryKeywords: extras,
               resume: !!(resume && prev),
             };
 
@@ -261,6 +271,18 @@ export default function StartPage() {
           value={keyword}
           onChange={(e) => setKeyword(e.target.value)}
         />
+      </Field>
+
+      <Field label="추가 카테고리 단어 (선택)">
+        <input
+          className="input"
+          placeholder="예: 세탁소, 코인세탁"
+          value={extraCategoryKeywords}
+          onChange={(e) => setExtraCategoryKeywords(e.target.value)}
+        />
+        <p className="mt-1 text-xs text-slate-500">
+          쉼표로 구분. 카테고리에 이 단어가 포함된 가게도 함께 수집됩니다.
+        </p>
       </Field>
 
       {mode === "all_korea" ? (
@@ -409,6 +431,20 @@ export default function StartPage() {
       )}
     </div>
   );
+}
+
+function parseExtraKeywords(input: string): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const raw of input.split(/[,\n]/)) {
+    const word = raw.trim();
+    if (!word) continue;
+    const key = word.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(word);
+  }
+  return out;
 }
 
 function Field({

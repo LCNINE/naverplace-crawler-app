@@ -12,6 +12,7 @@ const LastFormSchema = z
     headful: z.boolean().optional(),
     slowMo: z.number().optional(),
     collectMenu: z.boolean().optional(),
+    extraCategoryKeywords: z.array(z.string()).optional(),
   })
   .strict();
 

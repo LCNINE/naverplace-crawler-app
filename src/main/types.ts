@@ -30,6 +30,8 @@ export interface CrawlStartPayload {
   slowMo: number;
   /** 대표메뉴 수집 여부. 기본 true. */
   collectMenu?: boolean;
+  /** 사용자 정의 추가 카테고리 단어. 카테고리에 포함되면 매칭으로 인정. */
+  extraCategoryKeywords?: string[];
   resume: boolean;
 }
 

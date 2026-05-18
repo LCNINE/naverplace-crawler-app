@@ -60,6 +60,8 @@ export interface CrawlSessionOptions {
   slowMo: number;
   /** 대표메뉴 수집 여부. 기본 true. false면 가게당 5~10초 절약. */
   collectMenu?: boolean;
+  /** 사용자 정의 추가 카테고리 단어. matchesCategory에 그대로 전달. */
+  extraCategoryKeywords?: string[];
   resumeFrom?: ResumeFrom;
   placesRepo: IPlaceRepo;
   logger: Logger;
@@ -436,7 +438,13 @@ export class CrawlSession {
 
         // 클릭 전 카테고리 매칭 체크: 검색 키워드와 무관한 업종이면 skip.
         // 카테고리가 없으면(undefined) 일단 통과시켜 detail 단계로 진행.
-        if (!matchesCategory(keyword, item.category)) {
+        if (
+          !matchesCategory(
+            keyword,
+            item.category,
+            this.opts.extraCategoryKeywords
+          )
+        ) {
           logger.info(
             `🚫 카테고리 미스매치 skip: "${item.name}" [${item.category}] (keyword="${keyword}")`
           );
@@ -489,7 +497,13 @@ export class CrawlSession {
 
           // detail 단계 카테고리 매칭 — 리스트에선 카테고리 비어 있어 통과한 항목을
           // detail의 category_main 으로 한 번 더 검증한다. category_main 도 비어 있으면 통과.
-          if (!matchesCategory(keyword, detail.category_main)) {
+          if (
+            !matchesCategory(
+              keyword,
+              detail.category_main,
+              this.opts.extraCategoryKeywords
+            )
+          ) {
             logger.info(
               `🚫 detail 카테고리 미스매치 skip: "${detail.shop_name}" [${detail.category_main}] (keyword="${keyword}")`
             );

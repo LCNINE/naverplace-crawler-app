@@ -28,6 +28,7 @@ const StartSchema = z.object({
   headful: z.boolean(),
   slowMo: z.number().min(0).max(60000),
   collectMenu: z.boolean().optional(),
+  extraCategoryKeywords: z.array(z.string()).optional(),
   resume: z.boolean(),
 });
 
@@ -163,6 +164,7 @@ export function registerCrawlerIpc(mainWindow: BrowserWindow) {
       headful: parsed.headful,
       slowMo: parsed.slowMo,
       collectMenu: parsed.collectMenu,
+      extraCategoryKeywords: parsed.extraCategoryKeywords,
       resumeFrom,
       placesRepo,
       logger,

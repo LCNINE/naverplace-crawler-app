@@ -12,6 +12,7 @@ export interface AppPrefs {
     headful?: boolean;
     slowMo?: number;
     collectMenu?: boolean;
+    extraCategoryKeywords?: string[];
   };
 }
 

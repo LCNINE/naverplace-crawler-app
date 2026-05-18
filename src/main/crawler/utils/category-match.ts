@@ -25,12 +25,14 @@ const CATEGORY_ALIASES: Record<string, string[]> = {
  * - category가 비어있으면 true(통과). 리스트에서 카테고리를 못 긁어온 경우는
  *   detail 단계에서 한 번 더 거르거나 사용자에게 노출되도록 일단 통과시킨다.
  * - 키워드가 카테고리에 substring으로 포함되면 매칭.
+ * - 사용자 정의 extraKeywords 중 하나라도 substring으로 포함되면 매칭.
  * - alias 맵에 등록된 키워드는 alias 중 하나라도 카테고리에 포함되면 매칭.
- * - 둘 다 실패하면 미스매치.
+ * - 셋 다 실패하면 미스매치.
  */
 export function matchesCategory(
   keyword: string,
-  category: string | undefined | null
+  category: string | undefined | null,
+  extraKeywords: string[] = []
 ): boolean {
   const cat = (category ?? "").trim().toLowerCase();
   if (!cat) return true;
@@ -39,6 +41,11 @@ export function matchesCategory(
   if (!kw) return true;
 
   if (cat.includes(kw)) return true;
+
+  for (const extra of extraKeywords) {
+    const e = extra.trim().toLowerCase();
+    if (e && cat.includes(e)) return true;
+  }
 
   const aliases = CATEGORY_ALIASES[kw];
   if (aliases && aliases.some((a) => cat.includes(a.toLowerCase()))) {
