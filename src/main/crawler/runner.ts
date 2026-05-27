@@ -63,6 +63,8 @@ export interface CrawlSessionOptions {
   /** 사용자 정의 추가 카테고리 단어. matchesCategory에 그대로 전달. */
   extraCategoryKeywords?: string[];
   resumeFrom?: ResumeFrom;
+  /** 전국 순회 완주 후 처음부터 자동 재시작 (all_korea 모드 전용) */
+  autoRestart?: boolean;
   placesRepo: IPlaceRepo;
   logger: Logger;
   onProgress: (e: ProgressEvent) => void;
@@ -257,92 +259,129 @@ export class CrawlSession {
   private async runAllKorea(): Promise<void> {
     const { logger } = this.opts;
     const cities = Object.keys(KOREA_CITIES);
-    const startCi = this.opts.resumeFrom?.cityIndex ?? 0;
-    const startDi = this.opts.resumeFrom?.districtIndex ?? 0;
-    const startDoi = this.opts.resumeFrom?.dongIndex ?? 0;
+    let startCi = this.opts.resumeFrom?.cityIndex ?? 0;
+    let startDi = this.opts.resumeFrom?.districtIndex ?? 0;
+    let startDoi = this.opts.resumeFrom?.dongIndex ?? 0;
+    let roundCount = 0;
 
-    logger.info(
-      `🌐 전국 자동 순회 시작 (도시 ${cities.length}개, 시작: ${cities[startCi] ?? cities[0]})`
-    );
+    while (!this.stopped) {
+      roundCount += 1;
+      if (roundCount > 1) {
+        logger.info(`🔁 전국 자동 재시작 (${roundCount}회차)`);
+        await notifyChat({
+          category: "session_restarted",
+          severity: "info",
+          title: `🔁 전국 순회 자동 재시작 (${roundCount}회차)`,
+          context: {
+            "검색어": this.opts.keyword,
+            "세션 ID": this.opts.sessionId,
+          },
+        }).catch(() => undefined);
+        // 재시작 시에는 카운터/알림 플래그 리셋
+        this.consecutiveEmptyDongs = 0;
+        this.consecutiveIframeMissing = 0;
+        this.consecutiveSaveFailures = 0;
+        this.alertedEmptyDongs = false;
+        this.alertedIframeMissing = false;
+      }
 
-    for (let ci = startCi; ci < cities.length && !this.stopped; ci++) {
-      const city = cities[ci] as keyof typeof KOREA_CITIES;
-      const districts = Object.keys(KOREA_CITIES[city]);
-      this.currentCity = city;
-      this.currentCityIndex = ci;
+      logger.info(
+        `🌐 전국 자동 순회 시작 (도시 ${cities.length}개, 시작: ${cities[startCi] ?? cities[0]})`
+      );
 
-      for (
-        let di = ci === startCi ? startDi : 0;
-        di < districts.length && !this.stopped;
-        di++
-      ) {
-        const district = districts[di];
-        const dongs = (
-          KOREA_CITIES[city] as Record<string, string[]>
-        )[district];
-        this.currentDistrict = district;
-        this.currentDistrictIndex = di;
+      for (let ci = startCi; ci < cities.length && !this.stopped; ci++) {
+        const city = cities[ci] as keyof typeof KOREA_CITIES;
+        const districts = Object.keys(KOREA_CITIES[city]);
+        this.currentCity = city;
+        this.currentCityIndex = ci;
 
         for (
-          let doi =
-            ci === startCi && di === startDi ? startDoi : 0;
-          doi < dongs.length && !this.stopped;
-          doi++
+          let di = ci === startCi ? startDi : 0;
+          di < districts.length && !this.stopped;
+          di++
         ) {
-          const dong = dongs[doi];
-          this.currentDong = dong;
-          this.currentDongIndex = doi;
+          const district = districts[di];
+          const dongs = (
+            KOREA_CITIES[city] as Record<string, string[]>
+          )[district];
+          this.currentDistrict = district;
+          this.currentDistrictIndex = di;
 
-          const isResumeOrigin =
-            ci === startCi && di === startDi && doi === startDoi;
+          for (
+            let doi =
+              ci === startCi && di === startDi ? startDoi : 0;
+            doi < dongs.length && !this.stopped;
+            doi++
+          ) {
+            const dong = dongs[doi];
+            this.currentDong = dong;
+            this.currentDongIndex = doi;
 
-          try {
-            await this.processOne({
-              city,
-              district,
-              dong,
-              resumePage: isResumeOrigin
-                ? this.opts.resumeFrom?.page
-                : undefined,
-              resumeListIndex: isResumeOrigin
-                ? this.opts.resumeFrom?.listIndex
-                : undefined,
-            });
-          } catch (err) {
-            const msg = err instanceof Error ? err.message : String(err);
-            // CRAWL_ABORT 는 임계치 도달 시 자동 중단 신호 — 위에서 이미 webhook 보냈음
-            if (msg.startsWith("CRAWL_ABORT:")) {
-              logger.fatal(`🛑 ${msg}`);
-              throw err;
+            const isResumeOrigin =
+              roundCount === 1 &&
+              ci === startCi &&
+              di === startDi &&
+              doi === startDoi;
+
+            try {
+              await this.processOne({
+                city,
+                district,
+                dong,
+                resumePage: isResumeOrigin
+                  ? this.opts.resumeFrom?.page
+                  : undefined,
+                resumeListIndex: isResumeOrigin
+                  ? this.opts.resumeFrom?.listIndex
+                  : undefined,
+              });
+            } catch (err) {
+              const msg = err instanceof Error ? err.message : String(err);
+              // CRAWL_ABORT 는 임계치 도달 시 자동 중단 신호 — 위에서 이미 webhook 보냈음
+              if (msg.startsWith("CRAWL_ABORT:")) {
+                logger.fatal(`🛑 ${msg}`);
+                throw err;
+              }
+              logger.error(
+                { error: msg },
+                `❌ ${city} ${district} ${dong} 처리 실패`
+              );
+              if (isFatalPageError(msg)) {
+                await this.recycleBrowser("fatal error in dong loop").catch(
+                  () => {}
+                );
+              }
             }
-            logger.error(
-              { error: msg },
-              `❌ ${city} ${district} ${dong} 처리 실패`
-            );
-            if (isFatalPageError(msg)) {
-              await this.recycleBrowser("fatal error in dong loop").catch(
-                () => {}
+
+            if (this.stopped || this.opts.signal.aborted) break;
+
+            // 메모리 누수 회수: 동 단위로 Chromium 프로세스 통째 재시작
+            try {
+              await this.recycleBrowser(`완료: ${city} ${district} ${dong}`);
+            } catch (e) {
+              logger.error(
+                { error: e instanceof Error ? e.message : String(e) },
+                "browser recycle 실패"
               );
             }
           }
-
-          if (this.stopped || this.opts.signal.aborted) break;
-
-          // 메모리 누수 회수: 동 단위로 Chromium 프로세스 통째 재시작
-          try {
-            await this.recycleBrowser(`완료: ${city} ${district} ${dong}`);
-          } catch (e) {
-            logger.error(
-              { error: e instanceof Error ? e.message : String(e) },
-              "browser recycle 실패"
-            );
-          }
         }
       }
+
+      if (this.stopped) break;
+
+      logger.info(`🎉 전국 자동 순회 완료 (${roundCount}회차)`);
+
+      if (!this.opts.autoRestart) break;
+
+      // 다음 회차는 처음부터
+      startCi = 0;
+      startDi = 0;
+      startDoi = 0;
     }
 
     if (!this.stopped) {
-      this.opts.logger.info("🎉 전국 자동 순회 완료");
+      logger.info("✅ 전국 순회 모든 회차 완료");
     }
   }
 

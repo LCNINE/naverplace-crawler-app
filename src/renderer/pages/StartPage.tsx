@@ -31,6 +31,7 @@ export default function StartPage() {
   const [extraCategoryKeywords, setExtraCategoryKeywords] = useState("");
   const [prev, setPrev] = useState<PrevSession | null>(null);
   const [resume, setResume] = useState(false);
+  const [autoRestart, setAutoRestart] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [tableModal, setTableModal] = useState<null | {
@@ -205,6 +206,7 @@ export default function StartPage() {
               collectMenu,
               extraCategoryKeywords: extras,
               resume: !!(resume && prev),
+              autoRestart,
             }
           : {
               mode,
@@ -294,6 +296,14 @@ export default function StartPage() {
             데이터 양이 매우 많아 수 시간~수 일 걸릴 수 있습니다. 중지하면 위치가
             저장되어 이어서 재개 가능.
           </p>
+          <label className="mt-3 flex items-center gap-2 text-slate-300">
+            <input
+              type="checkbox"
+              checked={autoRestart}
+              onChange={(e) => setAutoRestart(e.target.checked)}
+            />
+            전국 완주 후 자동 재시작 (처음부터 반복)
+          </label>
         </div>
       ) : (
         <div className="grid grid-cols-1 gap-4 md:grid-cols-3">

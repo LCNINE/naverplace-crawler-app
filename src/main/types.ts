@@ -33,6 +33,8 @@ export interface CrawlStartPayload {
   /** 사용자 정의 추가 카테고리 단어. 카테고리에 포함되면 매칭으로 인정. */
   extraCategoryKeywords?: string[];
   resume: boolean;
+  /** 전국 순회 완주 후 처음부터 자동 재시작 (all_korea 모드 전용) */
+  autoRestart?: boolean;
 }
 
 export interface SessionState {

@@ -30,6 +30,7 @@ const StartSchema = z.object({
   collectMenu: z.boolean().optional(),
   extraCategoryKeywords: z.array(z.string()).optional(),
   resume: z.boolean(),
+  autoRestart: z.boolean().optional(),
 });
 
 type SessionEntry = {
@@ -166,6 +167,7 @@ export function registerCrawlerIpc(mainWindow: BrowserWindow) {
       collectMenu: parsed.collectMenu,
       extraCategoryKeywords: parsed.extraCategoryKeywords,
       resumeFrom,
+      autoRestart: parsed.mode === "all_korea" ? (parsed.autoRestart ?? false) : false,
       placesRepo,
       logger,
       signal: controller.signal,
