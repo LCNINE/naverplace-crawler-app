@@ -100,7 +100,7 @@ export class PlaywrightController implements BrowserController {
       headful: opts.headful,
       slowMo: opts.slowMo,
       log: opts.log,
-      persistent: opts.persistent ?? true,
+      persistent: opts.persistent ?? false,
       userDataDir: opts.userDataDir ?? join(config.dataDir, "playwright-profile"),
     };
   }
