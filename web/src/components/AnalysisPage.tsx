@@ -60,12 +60,59 @@ const COL_LABELS: Record<string, string> = {
   created_at: "날짜",
 };
 
+// 컬럼별 너비 클래스 (th/td 공통)
+const COL_WIDTH: Record<string, string> = {
+  shop_name: "w-[160px] min-w-[120px]",
+  category_main: "w-[120px] min-w-[100px]",
+  city: "w-[56px] min-w-[50px]",
+  district: "w-[64px] min-w-[56px]",
+  dong: "w-[72px] min-w-[60px]",
+  phone: "w-[110px] min-w-[90px]",
+  address: "min-w-[160px]",
+  status: "w-[64px] min-w-[56px]",
+  first_seen_at: "w-[88px] min-w-[80px]",
+  missing_at: "w-[88px] min-w-[80px]",
+  last_seen_at: "w-[88px] min-w-[80px]",
+  event_type: "w-[80px] min-w-[70px]",
+  created_at: "w-[88px] min-w-[80px]",
+};
+
 const TYPE_LABELS: Record<AnalysisType, string> = {
   "new-shops": "신규 오픈",
   "missing-shops": "사라진 샵",
   reappeared: "재오픈",
   "all-shops": "전체 조회",
 };
+
+const STATUS_STYLE: Record<string, string> = {
+  active: "bg-emerald-900/50 text-emerald-400",
+  missing: "bg-red-900/50 text-red-400",
+};
+
+function CellValue({ col, value }: { col: string; value: unknown }) {
+  if (value === null || value === undefined || value === "") {
+    return <span className="text-gray-600">—</span>;
+  }
+  if (col.endsWith("_at")) {
+    return <span>{new Date(value as string).toLocaleDateString("ko-KR")}</span>;
+  }
+  if (col === "status") {
+    const s = String(value);
+    return (
+      <span className={`px-1.5 py-0.5 rounded text-xs font-medium ${STATUS_STYLE[s] ?? "bg-gray-700 text-gray-300"}`}>
+        {s === "active" ? "활성" : s === "missing" ? "소멸" : s}
+      </span>
+    );
+  }
+  if (col === "address") {
+    return <span className="break-words whitespace-normal leading-snug">{String(value)}</span>;
+  }
+  return (
+    <span className="truncate block" title={String(value)}>
+      {String(value)}
+    </span>
+  );
+}
 
 export function AnalysisPage({ tasks }: Props) {
   const taskV2Tables = [...new Set(tasks.map((t) => t.table).filter((t) => t.endsWith("_v2")))];
@@ -132,7 +179,6 @@ export function AnalysisPage({ tasks }: Props) {
     <div className="flex flex-col gap-5">
       {/* 필터 */}
       <div className="bg-gray-800 rounded-xl p-4 border border-gray-700 flex flex-col gap-4">
-        {/* 1행: 테이블 + 분석 유형 */}
         <div className="flex flex-wrap gap-4 items-end">
           <div className="flex flex-col gap-1 min-w-52">
             <label className="text-xs text-gray-400">테이블</label>
@@ -168,7 +214,6 @@ export function AnalysisPage({ tasks }: Props) {
           </div>
         </div>
 
-        {/* 2행: 날짜 + 정렬 + 조회 */}
         <div className="flex flex-wrap gap-4 items-end">
           <div className="flex flex-col gap-1">
             <label className="text-xs text-gray-400">시작일</label>
@@ -227,6 +272,9 @@ export function AnalysisPage({ tasks }: Props) {
           <div className="flex items-center justify-between">
             <p className="text-sm text-gray-400">
               결과 <span className="text-white font-bold">{data.length.toLocaleString()}</span>건
+              {data.length === 500 && (
+                <span className="ml-2 text-yellow-500 text-xs">(최대 500건 표시)</span>
+              )}
             </p>
             {data.length > 0 && (
               <button
@@ -246,34 +294,44 @@ export function AnalysisPage({ tasks }: Props) {
           {data.length === 0 ? (
             <p className="text-gray-500 text-sm">결과가 없습니다.</p>
           ) : (
-            <div className="overflow-x-auto rounded-xl border border-gray-700">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="bg-gray-800 text-gray-400 text-left">
-                    {cols.map((col) => (
-                      <th key={col} className="px-3 py-2 font-medium whitespace-nowrap">
-                        {COL_LABELS[col] ?? col}
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {data.map((row, i) => (
-                    <tr
-                      key={i}
-                      className="border-t border-gray-700 hover:bg-gray-800/50 transition-colors"
-                    >
+            <div className="rounded-xl border border-gray-700 overflow-hidden">
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm table-fixed">
+                  <thead>
+                    <tr className="bg-gray-750 border-b border-gray-600 sticky top-0 z-10 bg-gray-800">
+                      <th className="w-10 px-2 py-3 text-gray-500 font-medium text-center text-xs">#</th>
                       {cols.map((col) => (
-                        <td key={col} className="px-3 py-2 text-gray-200 whitespace-nowrap max-w-xs truncate">
-                          {col.endsWith("_at") && row[col]
-                            ? new Date(row[col] as string).toLocaleDateString("ko-KR")
-                            : String(row[col] ?? "—")}
-                        </td>
+                        <th
+                          key={col}
+                          className={`px-3 py-3 text-gray-400 font-medium text-left text-xs tracking-wide ${COL_WIDTH[col] ?? ""}`}
+                        >
+                          {COL_LABELS[col] ?? col}
+                        </th>
                       ))}
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody>
+                    {data.map((row, i) => (
+                      <tr
+                        key={i}
+                        className={`border-t border-gray-700/50 transition-colors hover:bg-gray-700/40 ${
+                          i % 2 === 0 ? "bg-gray-900/20" : "bg-gray-800/20"
+                        }`}
+                      >
+                        <td className="px-2 py-2.5 text-gray-600 text-xs text-center">{i + 1}</td>
+                        {cols.map((col) => (
+                          <td
+                            key={col}
+                            className={`px-3 py-2.5 text-gray-200 text-sm align-top overflow-hidden ${COL_WIDTH[col] ?? ""}`}
+                          >
+                            <CellValue col={col} value={row[col]} />
+                          </td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </div>
           )}
         </div>
