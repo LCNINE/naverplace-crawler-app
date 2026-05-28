@@ -24,8 +24,8 @@ function parseWorkers(): WorkerConfig[] {
   const raw = process.env.WORKERS;
   if (!raw) throw new Error("필수 환경변수 없음: WORKERS");
   try {
-    // Railway가 따옴표로 감싸는 경우 제거
-    const trimmed = raw.trim().replace(/^['"]|['"]$/g, "");
+    // Railway가 따옴표로 감싸거나 "WORKERS=" 접두사를 포함하는 경우 제거
+    const trimmed = raw.trim().replace(/^['"]|['"]$/g, "").replace(/^WORKERS=/, "");
     const parsed = JSON.parse(trimmed);
     if (!Array.isArray(parsed) || parsed.length === 0) {
       throw new Error("WORKERS는 비어있지 않은 JSON 배열이어야 합니다.");
