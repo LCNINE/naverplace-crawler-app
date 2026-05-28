@@ -1,4 +1,5 @@
 import express from "express";
+import cors from "cors";
 import { mkdirSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -11,6 +12,7 @@ import { getProgressRepo } from "./storage/progress.repo.js";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
 const app = express();
+app.use(cors());
 app.use(express.json());
 
 const manager = new QueueManager();
