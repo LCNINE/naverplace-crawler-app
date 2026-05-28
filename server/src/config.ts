@@ -24,13 +24,15 @@ function parseWorkers(): WorkerConfig[] {
   const raw = process.env.WORKERS;
   if (!raw) throw new Error("필수 환경변수 없음: WORKERS");
   try {
-    const parsed = JSON.parse(raw);
+    // Railway가 따옴표로 감싸는 경우 제거
+    const trimmed = raw.trim().replace(/^['"]|['"]$/g, "");
+    const parsed = JSON.parse(trimmed);
     if (!Array.isArray(parsed) || parsed.length === 0) {
       throw new Error("WORKERS는 비어있지 않은 JSON 배열이어야 합니다.");
     }
     return parsed as WorkerConfig[];
   } catch (e) {
-    throw new Error(`WORKERS 파싱 실패: ${e instanceof Error ? e.message : String(e)}`);
+    throw new Error(`WORKERS 파싱 실패 (값: ${process.env.WORKERS?.slice(0, 100)}): ${e instanceof Error ? e.message : String(e)}`);
   }
 }
 
