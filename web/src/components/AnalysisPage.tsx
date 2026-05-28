@@ -38,10 +38,10 @@ function exportCsv(data: Record<string, unknown>[], filename: string) {
 }
 
 const COLS: Record<AnalysisType, string[]> = {
-  "new-shops": ["shop_name", "category_main", "city", "district", "dong", "phone", "address", "first_seen_at"],
-  "missing-shops": ["shop_name", "category_main", "city", "district", "dong", "phone", "address", "missing_at", "last_seen_at"],
+  "new-shops": ["shop_name", "category_main", "city", "district", "dong", "phone", "address", "naver_place_url", "first_seen_at"],
+  "missing-shops": ["shop_name", "category_main", "city", "district", "dong", "phone", "address", "naver_place_url", "missing_at", "last_seen_at"],
   reappeared: ["shop_name", "event_type", "created_at"],
-  "all-shops": ["shop_name", "category_main", "city", "district", "dong", "phone", "address", "status", "first_seen_at", "last_seen_at"],
+  "all-shops": ["shop_name", "category_main", "city", "district", "dong", "phone", "address", "naver_place_url", "status", "first_seen_at", "last_seen_at"],
 };
 
 const COL_LABELS: Record<string, string> = {
@@ -56,6 +56,7 @@ const COL_LABELS: Record<string, string> = {
   first_seen_at: "최초 발견",
   missing_at: "사라진 날짜",
   last_seen_at: "마지막 확인",
+  naver_place_url: "네이버",
   event_type: "이벤트",
   created_at: "날짜",
 };
@@ -73,6 +74,7 @@ const COL_WIDTH: Record<string, string> = {
   first_seen_at: "w-[88px] min-w-[80px]",
   missing_at: "w-[88px] min-w-[80px]",
   last_seen_at: "w-[88px] min-w-[80px]",
+  naver_place_url: "w-[72px] min-w-[60px]",
   event_type: "w-[80px] min-w-[70px]",
   created_at: "w-[88px] min-w-[80px]",
 };
@@ -102,6 +104,18 @@ function CellValue({ col, value }: { col: string; value: unknown }) {
       <span className={`px-1.5 py-0.5 rounded text-xs font-medium ${STATUS_STYLE[s] ?? "bg-gray-700 text-gray-300"}`}>
         {s === "active" ? "활성" : s === "missing" ? "소멸" : s}
       </span>
+    );
+  }
+  if (col === "naver_place_url") {
+    return (
+      <a
+        href={String(value)}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="text-blue-400 hover:text-blue-300 underline text-xs"
+      >
+        링크
+      </a>
     );
   }
   if (col === "address") {
