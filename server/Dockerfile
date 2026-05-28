@@ -6,16 +6,12 @@ WORKDIR /app
 COPY package*.json ./
 RUN npm install
 
-# 웹 UI 의존성 설치
-COPY web/package*.json ./web/
-RUN cd web && npm install
-
 # Chromium 설치 (playwright install chromium)
 RUN npx playwright install chromium
 
-# 소스 복사 및 빌드 (서버 + 웹 UI)
+# 소스 복사 및 빌드
 COPY . .
-RUN npm run build
+RUN npm run build:server
 
 # 데이터 디렉토리 생성
 RUN mkdir -p /app/data
