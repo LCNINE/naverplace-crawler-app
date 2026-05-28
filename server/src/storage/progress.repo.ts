@@ -80,6 +80,12 @@ export class ProgressRepo {
     await this.persist();
   }
 
+  async delete(key: string): Promise<void> {
+    const file = await this.load();
+    delete file.sessions[key];
+    await this.persist();
+  }
+
   async loadAll(): Promise<Record<string, SessionState>> {
     const file = await this.load();
     return { ...file.sessions };

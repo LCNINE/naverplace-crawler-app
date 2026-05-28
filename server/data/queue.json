@@ -1,0 +1,44 @@
+{
+  "version": 2,
+  "running": false,
+  "tasks": [
+    {
+      "id": "3a8269ef-d437-4cab-a89d-60cd8ffa330b",
+      "keyword": "해어",
+      "table": "hair_shops_v2",
+      "slowMo": 200,
+      "collectMenu": false,
+      "extraCategoryKeywords": [
+        "미용실"
+      ],
+      "order": 1,
+      "status": "idle",
+      "dongsCompleted": 0,
+      "updatedAt": "2026-05-28T02:16:04.317Z"
+    },
+    {
+      "id": "1e04370e-2eea-44a5-8742-e4435db4c473",
+      "keyword": "속눈썹",
+      "table": "lash_shops_v2",
+      "slowMo": 300,
+      "collectMenu": false,
+      "extraCategoryKeywords": [],
+      "order": 2,
+      "status": "idle",
+      "dongsCompleted": 0,
+      "updatedAt": "2026-05-28T02:16:06.485Z"
+    },
+    {
+      "id": "aacc235a-c626-4265-a905-069835b3c71e",
+      "keyword": "네일",
+      "table": "nailstore_nail_v2",
+      "slowMo": 200,
+      "collectMenu": false,
+      "extraCategoryKeywords": [],
+      "order": 0,
+      "status": "idle",
+      "dongsCompleted": 0,
+      "updatedAt": "2026-05-28T02:16:02.499Z"
+    }
+  ]
+}

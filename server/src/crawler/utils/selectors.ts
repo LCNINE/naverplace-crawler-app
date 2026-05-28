@@ -34,9 +34,10 @@ export async function findSearchFrameByUrl(
       const title = await frame.title().catch(() => "");
       seen.push({ url, name: frame.name() });
 
-      if (isLikelySearchFrame(url, title)) {
+      const nameMatch = frame.name() === "searchIframe";
+      if (nameMatch || isLikelySearchFrame(url, title)) {
         const hasContent = await frame
-          .evaluate(() => document.querySelectorAll("*").length > 100)
+          .evaluate(() => document.querySelectorAll("*").length > 10)
           .catch(() => false);
         if (hasContent) return frame;
       }

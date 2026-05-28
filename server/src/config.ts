@@ -22,7 +22,7 @@ function required(name: string): string {
 
 function parseWorkers(): WorkerConfig[] {
   const raw = process.env.WORKERS;
-  if (!raw) throw new Error("필수 환경변수 없음: WORKERS");
+  if (!raw) return [];
   try {
     // Railway가 따옴표로 감싸거나 "WORKERS=" 접두사를 포함하는 경우 제거
     const trimmed = raw.trim().replace(/^['"]|['"]$/g, "").replace(/^WORKERS=/, "");
