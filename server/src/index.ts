@@ -259,77 +259,90 @@ async function validateAnalysisTable(tableName: string, res: express.Response): 
 
 app.get("/api/analysis/:table/new-shops", async (req, res) => {
   if (!(await validateAnalysisTable(req.params.table, res))) return;
-  const since = req.query.since
-    ? new Date(String(req.query.since)).toISOString()
-    : new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+  const ascending = req.query.order === "asc";
+  const since = req.query.since ? new Date(String(req.query.since)).toISOString() : undefined;
+  const until = req.query.until ? new Date(String(req.query.until)).toISOString() : undefined;
 
   const client = await getAnalysisClient();
   let query = client
     .from(req.params.table)
     .select("shop_name, place_id, address, phone, category_main, category_sub, city, district, dong, naver_place_url, first_seen_at")
-    .gte("first_seen_at", since)
-    .order("first_seen_at", { ascending: false })
+    .order("first_seen_at", { ascending })
     .limit(500);
 
-  if (req.query.keyword) {
-    query = query.ilike("naver_search", `%${req.query.keyword}%`);
-  }
+  if (since) query = query.gte("first_seen_at", since);
+  if (until) query = query.lte("first_seen_at", until);
+  if (req.query.keyword) query = query.ilike("naver_search", `%${req.query.keyword}%`);
 
   const { data, error } = await query;
-  if (error) {
-    res.status(500).json({ error: error.message });
-    return;
-  }
+  if (error) { res.status(500).json({ error: error.message }); return; }
   res.json({ data });
 });
 
 app.get("/api/analysis/:table/missing-shops", async (req, res) => {
   if (!(await validateAnalysisTable(req.params.table, res))) return;
+  const ascending = req.query.order === "asc";
+  const since = req.query.since ? new Date(String(req.query.since)).toISOString() : undefined;
+  const until = req.query.until ? new Date(String(req.query.until)).toISOString() : undefined;
 
   const client = await getAnalysisClient();
   let query = client
     .from(req.params.table)
     .select("shop_name, place_id, address, phone, category_main, category_sub, city, district, dong, naver_place_url, missing_at, last_seen_at")
     .eq("status", "missing")
-    .order("missing_at", { ascending: false })
+    .order("missing_at", { ascending })
     .limit(500);
 
-  if (req.query.keyword) {
-    query = query.ilike("naver_search", `%${req.query.keyword}%`);
-  }
+  if (since) query = query.gte("missing_at", since);
+  if (until) query = query.lte("missing_at", until);
+  if (req.query.keyword) query = query.ilike("naver_search", `%${req.query.keyword}%`);
 
   const { data, error } = await query;
-  if (error) {
-    res.status(500).json({ error: error.message });
-    return;
-  }
+  if (error) { res.status(500).json({ error: error.message }); return; }
   res.json({ data });
 });
 
 app.get("/api/analysis/:table/events", async (req, res) => {
   if (!(await validateAnalysisTable(req.params.table, res))) return;
-  const since = req.query.since
-    ? new Date(String(req.query.since)).toISOString()
-    : new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+  const ascending = req.query.order === "asc";
+  const since = req.query.since ? new Date(String(req.query.since)).toISOString() : undefined;
+  const until = req.query.until ? new Date(String(req.query.until)).toISOString() : undefined;
 
   const client = await getAnalysisClient();
   let query = client
     .from("shop_events")
     .select("*")
     .eq("table_name", req.params.table)
-    .gte("occurred_at", since)
-    .order("occurred_at", { ascending: false })
+    .order("occurred_at", { ascending })
     .limit(500);
 
-  if (req.query.event_type) {
-    query = query.eq("event_type", String(req.query.event_type));
-  }
+  if (since) query = query.gte("occurred_at", since);
+  if (until) query = query.lte("occurred_at", until);
+  if (req.query.event_type) query = query.eq("event_type", String(req.query.event_type));
 
   const { data, error } = await query;
-  if (error) {
-    res.status(500).json({ error: error.message });
-    return;
-  }
+  if (error) { res.status(500).json({ error: error.message }); return; }
+  res.json({ data });
+});
+
+app.get("/api/analysis/:table/all-shops", async (req, res) => {
+  if (!(await validateAnalysisTable(req.params.table, res))) return;
+  const ascending = req.query.order === "asc";
+  const since = req.query.since ? new Date(String(req.query.since)).toISOString() : undefined;
+  const until = req.query.until ? new Date(String(req.query.until)).toISOString() : undefined;
+
+  const client = await getAnalysisClient();
+  let query = client
+    .from(req.params.table)
+    .select("shop_name, place_id, category_main, category_sub, city, district, dong, phone, address, status, first_seen_at, last_seen_at")
+    .order("first_seen_at", { ascending })
+    .limit(500);
+
+  if (since) query = query.gte("first_seen_at", since);
+  if (until) query = query.lte("first_seen_at", until);
+
+  const { data, error } = await query;
+  if (error) { res.status(500).json({ error: error.message }); return; }
   res.json({ data });
 });
 

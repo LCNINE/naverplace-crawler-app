@@ -33,6 +33,8 @@ const authFetch = (url: string, options: RequestInit = {}) =>
     },
   });
 
+type DateParams = { since?: string; until?: string; order?: "asc" | "desc" };
+
 export const api = {
   login: (email: string, password: string) =>
     fetch(`${BASE}/api/auth/login`, {
@@ -92,22 +94,45 @@ export const api = {
   getTables: () =>
     authFetch(`${BASE}/api/tables`).then((r) => json<{ usedTables: string[]; otherTables: string[] }>(r)),
 
-  getNewShops: (table: string, since?: string) => {
-    const params = since ? `?since=${encodeURIComponent(since)}` : "";
-    return authFetch(`${BASE}/api/analysis/${encodeURIComponent(table)}/new-shops${params}`).then((r) =>
+  getNewShops: (table: string, params?: DateParams) => {
+    const p = new URLSearchParams();
+    if (params?.since) p.set("since", params.since);
+    if (params?.until) p.set("until", params.until);
+    if (params?.order) p.set("order", params.order);
+    const qs = p.toString() ? `?${p}` : "";
+    return authFetch(`${BASE}/api/analysis/${encodeURIComponent(table)}/new-shops${qs}`).then((r) =>
       json<{ data: Record<string, unknown>[] }>(r)
     );
   },
 
-  getMissingShops: (table: string) =>
-    authFetch(`${BASE}/api/analysis/${encodeURIComponent(table)}/missing-shops`).then((r) =>
+  getMissingShops: (table: string, params?: DateParams) => {
+    const p = new URLSearchParams();
+    if (params?.since) p.set("since", params.since);
+    if (params?.until) p.set("until", params.until);
+    if (params?.order) p.set("order", params.order);
+    const qs = p.toString() ? `?${p}` : "";
+    return authFetch(`${BASE}/api/analysis/${encodeURIComponent(table)}/missing-shops${qs}`).then((r) =>
       json<{ data: Record<string, unknown>[] }>(r)
-    ),
+    );
+  },
 
-  getEvents: (table: string, eventType: string, since?: string) => {
-    const params = new URLSearchParams({ event_type: eventType });
-    if (since) params.set("since", since);
-    return authFetch(`${BASE}/api/analysis/${encodeURIComponent(table)}/events?${params}`).then((r) =>
+  getEvents: (table: string, eventType: string, params?: DateParams) => {
+    const p = new URLSearchParams({ event_type: eventType });
+    if (params?.since) p.set("since", params.since);
+    if (params?.until) p.set("until", params.until);
+    if (params?.order) p.set("order", params.order);
+    return authFetch(`${BASE}/api/analysis/${encodeURIComponent(table)}/events?${p}`).then((r) =>
+      json<{ data: Record<string, unknown>[] }>(r)
+    );
+  },
+
+  getAllShops: (table: string, params?: DateParams) => {
+    const p = new URLSearchParams();
+    if (params?.since) p.set("since", params.since);
+    if (params?.until) p.set("until", params.until);
+    if (params?.order) p.set("order", params.order);
+    const qs = p.toString() ? `?${p}` : "";
+    return authFetch(`${BASE}/api/analysis/${encodeURIComponent(table)}/all-shops${qs}`).then((r) =>
       json<{ data: Record<string, unknown>[] }>(r)
     );
   },
