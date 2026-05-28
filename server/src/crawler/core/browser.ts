@@ -151,9 +151,16 @@ export class PlaywrightController implements BrowserController {
     const ctx = await this.newContext();
     const page = await ctx.newPage();
     page.on("crash", () => this.opts.log.warn("page.crash"));
-    page.on("console", (msg) =>
-      this.opts.log.debug({ type: msg.type(), text: msg.text() }, "page.console")
-    );
+    page.on("console", (msg) => {
+      const text = msg.text();
+      if (
+        text.includes("Permissions policy violation") ||
+        text.includes("blocked by permissions policy") ||
+        text.includes("GPU stall due to ReadPixels") ||
+        text.includes("Failed to load resource")
+      ) return;
+      this.opts.log.debug({ type: msg.type(), text }, "page.console");
+    });
     return page;
   }
 

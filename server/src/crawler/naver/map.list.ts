@@ -50,7 +50,7 @@ export async function collectListItems(
         scrollAttempt < maxScrollAttempts;
         scrollAttempt++
       ) {
-        log.info(`Scroll attempt ${scrollAttempt + 1}/${maxScrollAttempts}...`);
+        log.debug(`Scroll attempt ${scrollAttempt + 1}/${maxScrollAttempts}`);
 
         try {
           // iframe 상태 확인 및 복구
@@ -101,7 +101,6 @@ export async function collectListItems(
             scrollContainer
           );
 
-          log.debug(`Current scroll height: ${currentScrollHeight}`);
 
           // 현재 화면에 보이는 가게 이름 요소들 찾기
           if (searchFrameElement) {
@@ -118,10 +117,7 @@ export async function collectListItems(
             let currentNameSpans: any[] = [];
             for (const selector of selectors) {
               currentNameSpans = await searchFrameElement.$$(selector);
-              if (currentNameSpans.length > 0) {
-                log.debug(`Using selector: ${selector} (${currentNameSpans.length} elements)`);
-                break;
-              }
+              if (currentNameSpans.length > 0) break;
             }
             
             if (currentNameSpans.length === 0) {
@@ -151,7 +147,6 @@ export async function collectListItems(
                 if (seenNames.has(trimmedName)) continue;
                 seenNames.add(trimmedName);
                 result.push({ index: result.length, name: trimmedName });
-                log.debug(`New place found: "${trimmedName}"`);
               } catch (e) {
                 continue;
               }
@@ -161,13 +156,6 @@ export async function collectListItems(
           // 새로운 요소가 추가되었는지 확인
           if (result.length === previousCount) {
             noNewShopsCount++;
-            log.debug(`No new places found (${noNewShopsCount}/5)`);
-
-            // 스크롤 높이 변화도 확인
-            if (currentScrollHeight === lastScrollHeight) {
-              log.debug("Scroll height unchanged");
-            }
-
             if (noNewShopsCount >= 5) {
               log.info(
                 "5 consecutive attempts with no new places, collection complete"
@@ -201,12 +189,8 @@ export async function collectListItems(
             );
 
             if (scrollResult) {
-              log.info("Scroll performed");
-
-              // 스크롤 후 로딩 대기
               await searchFrameElement.waitForTimeout(2000);
 
-              // lazyload-wrapper가 사라질 때까지 대기
               try {
                 const frameRef = searchFrameElement;
                 await frameRef.waitForFunction(
@@ -218,9 +202,8 @@ export async function collectListItems(
                   },
                   { timeout: 4000 }
                 );
-                log.info("Lazyload-wrapper disappeared, continuing...");
               } catch (e) {
-                log.warn("Lazyload-wrapper wait timeout, continuing...");
+                // lazyload timeout — 계속 진행
               }
             } else {
               log.info("No more scrolling possible");
@@ -480,10 +463,6 @@ export async function goToNextPage(page: Page, log: Logger) {
         const ariaDisabled = await link.getAttribute("aria-disabled");
         const linkText = await link.textContent();
 
-        log.debug(
-          `Link check: class="${classes}", aria-disabled="${ariaDisabled}", text="${linkText}"`
-        );
-
         // 숫자 페이지 버튼 확인 (mBN2s 클래스)
         if (
           classes &&
@@ -500,15 +479,11 @@ export async function goToNextPage(page: Page, log: Logger) {
           // 현재 활성 페이지 확인 (qxokY 클래스가 있으면 현재 페이지)
           if (classes.includes("qxokY")) {
             currentPageNumber = pageNum;
-            log.info(`🎯 Current active page found: ${pageNum}페이지`);
           }
 
           // 다음 페이지 번호 버튼 찾기 (현재 페이지 + 1)
           if (pageNum === currentPageNumber + 1 && ariaDisabled !== "true") {
             nextButton = link;
-            log.info(
-              `✅ Next number page button found: ${linkText} (current: ${currentPageNumber})`
-            );
           }
         }
 
@@ -520,34 +495,19 @@ export async function goToNextPage(page: Page, log: Logger) {
           linkText === "다음페이지"
         ) {
           nextPageButton = link;
-          log.info(`✅ Next page button found: ${linkText}`);
         }
       } catch (e) {
         continue;
       }
     }
 
-    // 현재 페이지 번호 로깅
-    log.info(
-      `📍 Current page: ${currentPageNumber}페이지, Max page: ${maxPageNumber}페이지`
-    );
+    log.debug(`📍 page ${currentPageNumber}/${maxPageNumber}`);
 
-    // 현재 페이지가 최대 페이지에 도달했는지 확인
-    if (currentPageNumber >= maxPageNumber) {
-      log.info(
-        `🚫 Already on the last page (${maxPageNumber}), no more pages available`
-      );
-      return false;
-    }
+    if (currentPageNumber >= maxPageNumber) return false;
 
-    // 다음 페이지 버튼이 없으면 "다음페이지" 버튼 사용
     if (!nextButton) {
       if (nextPageButton) {
-        // 5페이지 이후이거나 다음 숫자 버튼이 없을 때 "다음페이지" 버튼 사용
         nextButton = nextPageButton;
-        log.info(
-          `📝 Using next page button (current: ${currentPageNumber}페이지)`
-        );
       } else {
         // "다음페이지" 버튼이 없음 = 더 이상 페이지가 없음
         log.info(
@@ -563,44 +523,22 @@ export async function goToNextPage(page: Page, log: Logger) {
       const isEnabled = await nextButton.isEnabled();
 
       if (isVisible && isEnabled) {
-        log.info("🖱️ Clicking next page button...");
-
-        // 더 안전한 클릭 방식 사용
         try {
           await nextButton.click({ timeout: 15000 });
-          await page.waitForTimeout(5000); // 페이지 로딩 대기 시간 증가
+          await page.waitForTimeout(5000);
 
-          // 페이지 이동 후 iframe 상태 확인
           try {
-            const newContent = await searchFrameElement.evaluate(
-              () => document.body.innerHTML.length
-            );
-            log.debug(`Page content length after navigation: ${newContent}`);
-            log.info("✅ Successfully moved to next page");
+            await searchFrameElement.evaluate(() => document.body.innerHTML.length);
 
-            // 페이지 이동 후 실제 페이지 번호 확인
-            log.info("🔍 Checking actual page number after navigation...");
             await page.waitForTimeout(3000);
 
             try {
-              const actualNextPage = await getCurrentPageNumber(
-                searchFrameElement,
-                log
-              );
-              log.info(`📍 Actually moved to page: ${actualNextPage}페이지`);
+              const actualNextPage = await getCurrentPageNumber(searchFrameElement, log);
+              log.info(`📍 페이지 이동: ${currentPageNumber} → ${actualNextPage}`);
 
-              // 페이지 번호가 실제로 증가했는지 확인
-              if (actualNextPage > currentPageNumber) {
-                log.info(
-                  `✅ Page navigation successful: ${currentPageNumber} → ${actualNextPage}`
-                );
-                return true;
-              } else {
-                log.warn(
-                  `⚠️ Page number didn't increase: ${currentPageNumber} → ${actualNextPage}`
-                );
-                return false;
-              }
+              if (actualNextPage > currentPageNumber) return true;
+              log.warn(`⚠️ 페이지 번호 미변화: ${currentPageNumber} → ${actualNextPage}`);
+              return false;
             } catch (pageCheckError) {
               log.warn(
                 `⚠️ Page number check failed, assuming success: ${
@@ -806,13 +744,6 @@ export async function getMaxPageNumber(
   log?: Logger
 ): Promise<number> {
   try {
-    if (log) {
-      log.info("🔍 최대 페이지 번호 확인 중...");
-    } else {
-      console.log("🔍 최대 페이지 번호 확인 중...");
-    }
-
-    // lash_scraper_seoul.js 패턴: zRM9F 클래스의 페이지네이션 컨테이너에서 확인
     const paginationContainer = await searchFrame.$("div.zRM9F");
     if (!paginationContainer) {
       if (log) {
@@ -883,24 +814,9 @@ export async function getCurrentPageNumber(
   log?: Logger
 ): Promise<number> {
   try {
-    if (log) {
-      log.info("🔍 현재 페이지 번호 확인 중...");
-    } else {
-      console.log("🔍 현재 페이지 번호 확인 중...");
-    }
-
-    // lash_scraper_seoul.js 패턴: zRM9F 클래스의 페이지네이션 컨테이너에서 확인
     const paginationContainer = await searchFrame.$("div.zRM9F");
-    if (!paginationContainer) {
-      if (log) {
-        log.warn("❌ 페이지네이션 컨테이너(zRM9F)를 찾을 수 없음");
-      } else {
-        console.warn("❌ 페이지네이션 컨테이너(zRM9F)를 찾을 수 없음");
-      }
-      return 1; // 기본값
-    }
+    if (!paginationContainer) return 1;
 
-    // 페이지 링크 타입 정의
     type PageLink = {
       pageNum: number;
       classes: string;
@@ -910,78 +826,27 @@ export async function getCurrentPageNumber(
       text: string;
     };
 
-    // lash_scraper_seoul.js 패턴: mBN2s 클래스의 숫자 페이지 버튼들 찾기
     const pageLinks = await searchFrame.$$eval(
       'a[class*="mBN2s"]',
       (links: Element[]): PageLink[] => {
         const results: PageLink[] = [];
-
         links.forEach((link: Element, index: number) => {
           const text = link.textContent?.trim() || "";
           const classes = (link as HTMLElement).className || "";
-          const ariaDisabled = (link as HTMLElement).getAttribute(
-            "aria-disabled"
-          );
-
-          // 숫자 페이지 버튼만 필터링
+          const ariaDisabled = (link as HTMLElement).getAttribute("aria-disabled");
           const pageNum = parseInt(text);
           if (!isNaN(pageNum)) {
-            const isActive = classes.includes("qxokY"); // lash_scraper_seoul.js에서 확인된 활성 페이지 클래스
-            results.push({
-              pageNum,
-              classes,
-              ariaDisabled,
-              isActive,
-              index,
-              text,
-            });
+            results.push({ pageNum, classes, ariaDisabled, isActive: classes.includes("qxokY"), index, text });
           }
         });
-
         return results;
       }
     );
 
-    if (log) {
-      log.info(`📊 총 ${pageLinks.length}개 페이지 버튼 발견`);
-    } else {
-      console.log(`📊 총 ${pageLinks.length}개 페이지 버튼 발견`);
-    }
-
-    // lash_scraper_seoul.js 패턴: qxokY 클래스가 있는 현재 활성 페이지 찾기
     const activePage = pageLinks.find((link: PageLink) => link.isActive);
-    if (activePage) {
-      if (log) {
-        log.info(`✅ 현재 활성 페이지 발견: ${activePage.pageNum}페이지`);
-      } else {
-        console.log(`✅ 현재 활성 페이지 발견: ${activePage.pageNum}페이지`);
-      }
-      return activePage.pageNum;
-    }
+    if (activePage) return activePage.pageNum;
 
-    // 활성 페이지가 없으면 디버깅 정보 출력
-    if (log) {
-      log.warn("⚠️ 활성 페이지를 찾을 수 없음, 모든 페이지 정보:");
-      pageLinks.forEach((link: PageLink) => {
-        log.debug(
-          `📄 ${link.pageNum}페이지: classes="${link.classes}", active=${link.isActive}`
-        );
-      });
-    } else {
-      console.warn("⚠️ 활성 페이지를 찾을 수 없음, 모든 페이지 정보:");
-      pageLinks.forEach((link: PageLink) => {
-        console.log(
-          `📄 ${link.pageNum}페이지: classes="${link.classes}", active=${link.isActive}`
-        );
-      });
-    }
-
-    // 기본값 1 반환
-    if (log) {
-      log.info("🔄 기본값 1페이지 반환");
-    } else {
-      console.log("🔄 기본값 1페이지 반환");
-    }
+    if (log) log.warn("⚠️ 활성 페이지를 찾을 수 없음");
     return 1;
   } catch (error) {
     if (log) {
