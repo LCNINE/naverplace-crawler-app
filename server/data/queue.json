@@ -8,9 +8,7 @@
       "table": "hair_shops_v2",
       "slowMo": 200,
       "collectMenu": false,
-      "extraCategoryKeywords": [
-        "미용실"
-      ],
+      "extraCategoryKeywords": ["미용실"],
       "order": 1,
       "status": "idle",
       "dongsCompleted": 0,
@@ -39,6 +37,24 @@
       "status": "idle",
       "dongsCompleted": 0,
       "updatedAt": "2026-05-28T02:16:02.499Z"
+    },
+    {
+      "id": "b7f3a2c1-9e4d-4b8f-a5c6-d1e2f3a4b5c6",
+      "keyword": "빨래방",
+      "table": "coin_laundry_v2",
+      "slowMo": 300,
+      "collectMenu": false,
+      "extraCategoryKeywords": [
+        "코인세탁",
+        "코인빨래",
+        "세탁",
+        "빨래",
+        "세탁소"
+      ],
+      "order": 3,
+      "status": "idle",
+      "dongsCompleted": 0,
+      "updatedAt": "2026-05-29T00:00:00.000Z"
     }
   ]
 }
