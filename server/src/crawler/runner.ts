@@ -21,6 +21,29 @@ import type { Logger } from "./logging/logger.js";
 import type { IPlaceRepo } from "./extractors/repository.js";
 import { KOREA_CITIES } from "./config/korea-data.js";
 
+const IP_BLOCK_ERROR = "IP_BLOCK";
+const IP_BLOCK_WAIT_MS = 5 * 60 * 1000; // 5분 대기
+const IP_BLOCK_MAX_RETRIES = 3;
+
+async function detectIpBlock(page: Page): Promise<boolean> {
+  try {
+    const url = page.url();
+    if (/captcha|block|restrict/i.test(url)) return true;
+
+    const bodyText = await page.locator("body").textContent({ timeout: 5000 }).catch(() => "");
+    if (!bodyText) return false;
+
+    const t = bodyText.toLowerCase();
+    if (t.includes("비정상적인 접근")) return true;
+    if (t.includes("ip") && (t.includes("차단") || t.includes("제한") || t.includes("block"))) return true;
+    if (t.includes("이용이 제한")) return true;
+    if (t.includes("보안 인증") && !t.includes("네이버 지도")) return true;
+  } catch {
+    // ignore
+  }
+  return false;
+}
+
 // 자동 종료 / 알림 임계치
 const MAX_CONSECUTIVE_SAVE_FAILURES = 10;  // 도달 시 세션 종료 + critical 알림
 const ALERT_EMPTY_DONGS = 10;              // 알림만 (종료 X)
@@ -326,33 +349,53 @@ export class CrawlSession {
               di === startDi &&
               doi === startDoi;
 
-            try {
-              await this.processOne({
-                city,
-                district,
-                dong,
-                resumePage: isResumeOrigin
-                  ? this.opts.resumeFrom?.page
-                  : undefined,
-                resumeListIndex: isResumeOrigin
-                  ? this.opts.resumeFrom?.listIndex
-                  : undefined,
-              });
-            } catch (err) {
-              const msg = err instanceof Error ? err.message : String(err);
-              // CRAWL_ABORT 는 임계치 도달 시 자동 중단 신호 — 위에서 이미 webhook 보냈음
-              if (msg.startsWith("CRAWL_ABORT:")) {
-                logger.fatal(`🛑 ${msg}`);
-                throw err;
-              }
-              logger.error(
-                { error: msg },
-                `❌ ${city} ${district} ${dong} 처리 실패`
-              );
-              if (isFatalPageError(msg)) {
-                await this.recycleBrowser("fatal error in dong loop").catch(
-                  () => {}
+            let ipBlockRetry = 0;
+            while (!this.stopped) {
+              try {
+                await this.processOne({
+                  city,
+                  district,
+                  dong,
+                  resumePage: isResumeOrigin && ipBlockRetry === 0
+                    ? this.opts.resumeFrom?.page
+                    : undefined,
+                  resumeListIndex: isResumeOrigin && ipBlockRetry === 0
+                    ? this.opts.resumeFrom?.listIndex
+                    : undefined,
+                });
+                break;
+              } catch (err) {
+                const msg = err instanceof Error ? err.message : String(err);
+
+                if (msg.startsWith("CRAWL_ABORT:")) {
+                  logger.fatal(`🛑 ${msg}`);
+                  throw err;
+                }
+
+                if (msg.startsWith(`${IP_BLOCK_ERROR}:`)) {
+                  ipBlockRetry++;
+                  if (ipBlockRetry > IP_BLOCK_MAX_RETRIES) {
+                    logger.error(`🚫 IP 차단 재시도 ${IP_BLOCK_MAX_RETRIES}회 초과, 다음 동으로 넘어감`);
+                    break;
+                  }
+                  logger.warn(
+                    `🚫 IP 차단 감지 — ${IP_BLOCK_WAIT_MS / 60000}분 대기 후 재시도 (${ipBlockRetry}/${IP_BLOCK_MAX_RETRIES})`
+                  );
+                  await this.recycleBrowser("IP block - waiting").catch(() => {});
+                  await new Promise((r) => setTimeout(r, IP_BLOCK_WAIT_MS));
+                  continue;
+                }
+
+                logger.error(
+                  { error: msg },
+                  `❌ ${city} ${district} ${dong} 처리 실패`
                 );
+                if (isFatalPageError(msg)) {
+                  await this.recycleBrowser("fatal error in dong loop").catch(
+                    () => {}
+                  );
+                }
+                break;
               }
             }
 
@@ -400,6 +443,11 @@ export class CrawlSession {
     logger.info(`🎯 ${city} ${district} ${dong} (keyword: ${keyword}) 처리 시작`);
 
     await runSearch(this.page, `${district} ${dong} ${keyword}`, logger);
+
+    if (await detectIpBlock(this.page)) {
+      logger.warn("🚫 IP 차단 페이지 감지");
+      throw new Error(`${IP_BLOCK_ERROR}: ${district} ${dong}`);
+    }
 
     let startListIndex = 0;
     if (resumePage && resumePage > 1) {

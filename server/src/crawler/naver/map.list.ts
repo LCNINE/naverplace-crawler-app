@@ -106,10 +106,11 @@ export async function collectListItems(
           if (searchFrameElement) {
             // 여러 셀렉터 시도 (네이버 지도 구조 변경 대응 — 새 버전 우선)
             const selectors = [
-              "span.O_Uah",              // 2026 신규 (li.p0FrU 안)
-              "a.ZLKCq span.O_Uah",      // 좀 더 한정한 버전
-              "a.place_bluelink span",   // 직전 버전
-              "span.YwYLL",              // 이전 버전
+              "span.nuCTT",              // 2026 최신
+              "span.O_Uah",              // 2026 이전
+              "a.ZLKCq span.O_Uah",
+              "a.place_bluelink span",
+              "span.YwYLL",
               "span[class*='name']",
               "div[class*='name']",
             ];
@@ -243,11 +244,11 @@ export async function collectListItems(
           const out: Record<string, string> = {};
           // 신규(li.p0FrU)와 구버전(li.VLTHu) 모두 지원
           const items = document.querySelectorAll(
-            "li.p0FrU, li.VLTHu, li[class*='p0FrU'], li[class*='VLTHu']"
+            "li.UISbl, li.p0FrU, li.VLTHu, li[class*='p0FrU'], li[class*='VLTHu']"
           );
           items.forEach((li) => {
-            const nameEl = li.querySelector("span.O_Uah, span.YwYLL");
-            const catEl = li.querySelector("span.YzBgS"); // 신규 list엔 카테고리가 없을 수 있음
+            const nameEl = li.querySelector("span.nuCTT, span.O_Uah, span.YwYLL");
+            const catEl = li.querySelector("span.ulItq, span.YzBgS");
             const name = (nameEl?.textContent ?? "").replace(/\s+/g, " ").trim();
             const category = (catEl?.textContent ?? "")
               .replace(/\s+/g, " ")
@@ -280,8 +281,13 @@ export async function collectListItems(
 
       // 3. 대체 방법: a.ZLKCq / a.place_bluelink[role="button"] 사용
       let placeLinks = await searchFrameElement.$$(
-        'a.ZLKCq[role="button"]'
+        'a.XCvzh[role="button"]'
       );
+      if (placeLinks.length === 0) {
+        placeLinks = await searchFrameElement.$$(
+          'a.ZLKCq[role="button"]'
+        );
+      }
       if (placeLinks.length === 0) {
         placeLinks = await searchFrameElement.$$(
           'a.place_bluelink[role="button"]'
@@ -292,8 +298,7 @@ export async function collectListItems(
       for (let i = 0; i < placeLinks.length; i++) {
         try {
           const link = placeLinks[i];
-          // 매장명 추출 (신규: span.O_Uah, 구버전: span.YwYLL)
-          const nameSpan = await link.$("span.O_Uah, span.YwYLL");
+          const nameSpan = await link.$("span.nuCTT, span.O_Uah, span.YwYLL");
           if (nameSpan) {
             const shopName = await nameSpan.textContent();
             if (shopName && shopName.trim().length > 0) {
@@ -359,6 +364,7 @@ export async function clickListItem(
     //   신규: <li class="p0FrU hpMQd"><a class="ZLKCq Vhvqp"><span class="O_Uah">..</span></a>
     //   구버전: <li class="VLTHu OW9LQ"><a class="U70Fj k4f_J"><span class="YwYLL">..</span></a>
     const itemSelectors = [
+      "li.UISbl",
       "li.p0FrU",
       "li.p0FrU.hpMQd",
       "li[class*='p0FrU']",
@@ -387,6 +393,7 @@ export async function clickListItem(
 
     // li 안의 클릭 가능한 a 후보들 — 신규(ZLKCq) 우선, 구버전(U70Fj) fallback
     const linkCandidates = [
+      "a.XCvzh",
       "a.ZLKCq",
       "a.ZLKCq.Vhvqp",
       "div.lAVyB a",
@@ -394,7 +401,6 @@ export async function clickListItem(
       "a.U70Fj.k4f_J",
       "div.DPldi a",
       "a.place_bluelink",
-      "a[role='button']",
     ];
     let targetLink: any = null;
     for (const sel of linkCandidates) {
