@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import type { Task } from "../types";
-import { api } from "../api";
+import type { ApiClient } from "../api";
 import {
   Select,
   SelectContent,
@@ -23,9 +23,10 @@ interface Props {
   }) => Promise<void>;
   onCancel: () => void;
   submitLabel?: string;
+  apiClient: ApiClient;
 }
 
-export function TaskForm({ initial, onSubmit, onCancel, submitLabel = "추가" }: Props) {
+export function TaskForm({ initial, onSubmit, onCancel, submitLabel = "추가", apiClient }: Props) {
   const [keyword, setKeyword] = useState(initial?.keyword ?? "");
   const [table, setTable] = useState(initial?.table ?? "");
   const [slowMo, setSlowMo] = useState(initial?.slowMo ?? 0);
@@ -40,7 +41,7 @@ export function TaskForm({ initial, onSubmit, onCancel, submitLabel = "추가" }
   const [tablesLoading, setTablesLoading] = useState(true);
 
   useEffect(() => {
-    api.getTables()
+    apiClient.getTables()
       .then((res) => {
         setUsedTables(res.usedTables);
         setOtherTables(res.otherTables);

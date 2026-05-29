@@ -1,20 +1,21 @@
 import { useState, useRef } from "react";
 import type { Task } from "../types";
-import { api } from "../api";
+import type { ApiClient } from "../api";
 import { TaskCard } from "./TaskCard";
 import { TaskForm } from "./TaskForm";
 
 interface Props {
   tasks: Task[];
   onRefresh: () => void;
+  apiClient: ApiClient;
 }
 
-export function TaskManager({ tasks, onRefresh }: Props) {
+export function TaskManager({ tasks, onRefresh, apiClient }: Props) {
   const [showAdd, setShowAdd] = useState(false);
   const dragId = useRef<string | null>(null);
 
-  const handleAdd = async (data: Parameters<typeof api.addTask>[0]) => {
-    await api.addTask(data);
+  const handleAdd = async (data: Parameters<ApiClient["addTask"]>[0]) => {
+    await apiClient.addTask(data);
     setShowAdd(false);
     onRefresh();
   };
@@ -37,7 +38,7 @@ export function TaskManager({ tasks, onRefresh }: Props) {
     ids.splice(toIdx, 0, dragId.current);
     dragId.current = null;
     try {
-      await api.reorderTasks(ids);
+      await apiClient.reorderTasks(ids);
       onRefresh();
     } catch (e) {
       alert(e instanceof Error ? e.message : String(e));
@@ -61,7 +62,7 @@ export function TaskManager({ tasks, onRefresh }: Props) {
       {showAdd && (
         <div className="bg-gray-800 rounded-xl p-4 border border-blue-700/40">
           <p className="text-sm font-semibold text-gray-300 mb-3">새 작업 추가</p>
-          <TaskForm onSubmit={handleAdd} onCancel={() => setShowAdd(false)} submitLabel="추가" />
+          <TaskForm onSubmit={handleAdd} onCancel={() => setShowAdd(false)} submitLabel="추가" apiClient={apiClient} />
         </div>
       )}
 
@@ -81,6 +82,7 @@ export function TaskManager({ tasks, onRefresh }: Props) {
             onDragStart={handleDragStart}
             onDragOver={handleDragOver}
             onDrop={handleDrop}
+            apiClient={apiClient}
           />
         ))}
       </div>

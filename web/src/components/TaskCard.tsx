@@ -1,6 +1,6 @@
 import { useState } from "react";
 import type { Task } from "../types";
-import { api } from "../api";
+import type { ApiClient } from "../api";
 import { TaskForm } from "./TaskForm";
 
 interface Props {
@@ -9,6 +9,7 @@ interface Props {
   onDragStart: (id: string) => void;
   onDragOver: (e: React.DragEvent) => void;
   onDrop: (targetId: string) => void;
+  apiClient: ApiClient;
 }
 
 const STATUS_LABELS: Record<string, { label: string; cls: string }> = {
@@ -18,7 +19,7 @@ const STATUS_LABELS: Record<string, { label: string; cls: string }> = {
   error: { label: "오류", cls: "bg-red-900/60 text-red-300" },
 };
 
-export function TaskCard({ task, onRefresh, onDragStart, onDragOver, onDrop }: Props) {
+export function TaskCard({ task, onRefresh, onDragStart, onDragOver, onDrop, apiClient }: Props) {
   const [editing, setEditing] = useState(false);
   const isRunning = task.status === "running";
   const badge = STATUS_LABELS[task.status] ?? STATUS_LABELS.idle;
@@ -26,7 +27,7 @@ export function TaskCard({ task, onRefresh, onDragStart, onDragOver, onDrop }: P
   const handleDelete = async () => {
     if (!confirm(`"${task.keyword}" 작업을 삭제하시겠습니까?`)) return;
     try {
-      await api.deleteTask(task.id);
+      await apiClient.deleteTask(task.id);
       onRefresh();
     } catch (e) {
       alert(e instanceof Error ? e.message : String(e));
@@ -36,15 +37,15 @@ export function TaskCard({ task, onRefresh, onDragStart, onDragOver, onDrop }: P
   const handleReset = async () => {
     if (!confirm(`"${task.keyword}" 진행 상황을 초기화하시겠습니까?\n다음 실행 시 처음(서울 강남구)부터 다시 시작합니다.`)) return;
     try {
-      await api.resetProgress(task.id);
+      await apiClient.resetProgress(task.id);
       onRefresh();
     } catch (e) {
       alert(e instanceof Error ? e.message : String(e));
     }
   };
 
-  const handleUpdate = async (data: Parameters<typeof api.updateTask>[1]) => {
-    await api.updateTask(task.id, data);
+  const handleUpdate = async (data: Parameters<ApiClient["updateTask"]>[1]) => {
+    await apiClient.updateTask(task.id, data);
     setEditing(false);
     onRefresh();
   };
@@ -58,6 +59,7 @@ export function TaskCard({ task, onRefresh, onDragStart, onDragOver, onDrop }: P
           onSubmit={handleUpdate}
           onCancel={() => setEditing(false)}
           submitLabel="저장"
+          apiClient={apiClient}
         />
       </div>
     );

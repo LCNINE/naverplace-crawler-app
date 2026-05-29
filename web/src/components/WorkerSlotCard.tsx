@@ -1,15 +1,16 @@
 import type { SlotInfo } from "../types";
-import { api } from "../api";
+import type { ApiClient } from "../api";
 
 interface Props {
   slot: SlotInfo;
   onRefresh: () => void;
+  apiClient: ApiClient;
 }
 
-export function WorkerSlotCard({ slot, onRefresh }: Props) {
+export function WorkerSlotCard({ slot, onRefresh, apiClient }: Props) {
   const handleStop = async () => {
     try {
-      await api.stopSlot(slot.slotId);
+      await apiClient.stopSlot(slot.slotId);
       onRefresh();
     } catch (e) {
       alert(e instanceof Error ? e.message : String(e));

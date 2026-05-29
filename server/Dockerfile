@@ -2,11 +2,11 @@ FROM mcr.microsoft.com/playwright:v1.46.0-jammy
 
 WORKDIR /app
 
-# 패키지 파일 복사 및 의존성 설치
+# 패키지 파일 복사 및 의존성 설치 (postinstall의 playwright install 스킵)
 COPY package*.json ./
-RUN npm install
+RUN npm install --ignore-scripts
 
-# Chromium 설치 (playwright install chromium)
+# Chromium 설치
 RUN npx playwright install chromium
 
 # 소스 복사 및 빌드

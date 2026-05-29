@@ -1,7 +1,5 @@
 import type { Task, QueueFullState } from "./types";
 
-const BASE = import.meta.env.VITE_API_URL ?? "";
-
 let _token: string | null = localStorage.getItem("auth_token");
 
 export const setAuthToken = (token: string | null) => {
@@ -24,116 +22,125 @@ const json = async <T>(res: Response): Promise<T> => {
   return res.json() as Promise<T>;
 };
 
-const authFetch = (url: string, options: RequestInit = {}) =>
-  fetch(url, {
-    ...options,
-    headers: {
-      ...options.headers,
-      ...(_token ? { Authorization: `Bearer ${_token}` } : {}),
-    },
-  });
-
 type DateParams = { since?: string; until?: string; order?: "asc" | "desc" };
 
-export const api = {
-  login: (email: string, password: string) =>
-    fetch(`${BASE}/api/auth/login`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email, password }),
-    }).then((r) => json<{ access_token: string; expires_at: number }>(r)),
+export function createApi(base: string) {
+  const authFetch = (url: string, options: RequestInit = {}) =>
+    fetch(url, {
+      ...options,
+      headers: {
+        ...options.headers,
+        ...(_token ? { Authorization: `Bearer ${_token}` } : {}),
+      },
+    });
 
-  getQueueState: () =>
-    authFetch(`${BASE}/api/queue/state`).then((r) => json<QueueFullState>(r)),
+  return {
+    login: (email: string, password: string) =>
+      fetch(`${base}/api/auth/login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, password }),
+      }).then((r) => json<{ access_token: string; expires_at: number }>(r)),
 
-  getTasks: () =>
-    fetch(`${BASE}/api/tasks`).then((r) => json<{ tasks: Task[] }>(r)).then((d) => d.tasks),
+    getQueueState: () =>
+      authFetch(`${base}/api/queue/state`).then((r) => json<QueueFullState>(r)),
 
-  addTask: (body: {
-    keyword: string;
-    table: string;
-    slowMo: number;
-    collectMenu: boolean;
-    extraCategoryKeywords: string[];
-  }) =>
-    authFetch(`${BASE}/api/tasks`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    }).then((r) => json<Task>(r)),
+    getTasks: () =>
+      fetch(`${base}/api/tasks`).then((r) => json<{ tasks: Task[] }>(r)).then((d) => d.tasks),
 
-  updateTask: (id: string, body: Partial<Omit<Task, "id">>) =>
-    authFetch(`${BASE}/api/tasks/${id}`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    }).then((r) => json<Task>(r)),
+    addTask: (body: {
+      keyword: string;
+      table: string;
+      slowMo: number;
+      collectMenu: boolean;
+      extraCategoryKeywords: string[];
+    }) =>
+      authFetch(`${base}/api/tasks`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      }).then((r) => json<Task>(r)),
 
-  deleteTask: (id: string) =>
-    authFetch(`${BASE}/api/tasks/${id}`, { method: "DELETE" }).then((r) => json<{ ok: boolean }>(r)),
+    updateTask: (id: string, body: Partial<Omit<Task, "id">>) =>
+      authFetch(`${base}/api/tasks/${id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      }).then((r) => json<Task>(r)),
 
-  reorderTasks: (ids: string[]) =>
-    authFetch(`${BASE}/api/tasks/reorder`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ids }),
-    }).then((r) => json<{ ok: boolean }>(r)),
+    deleteTask: (id: string) =>
+      authFetch(`${base}/api/tasks/${id}`, { method: "DELETE" }).then((r) => json<{ ok: boolean }>(r)),
 
-  startQueue: () =>
-    authFetch(`${BASE}/api/queue/start`, { method: "POST" }).then((r) => json<{ ok: boolean }>(r)),
+    reorderTasks: (ids: string[]) =>
+      authFetch(`${base}/api/tasks/reorder`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ids }),
+      }).then((r) => json<{ ok: boolean }>(r)),
 
-  stopQueue: () =>
-    authFetch(`${BASE}/api/queue/stop`, { method: "POST" }).then((r) => json<{ ok: boolean }>(r)),
+    startQueue: () =>
+      authFetch(`${base}/api/queue/start`, { method: "POST" }).then((r) => json<{ ok: boolean }>(r)),
 
-  stopSlot: (slotId: number) =>
-    authFetch(`${BASE}/api/workers/${slotId}/stop`, { method: "POST" }).then((r) => json<{ ok: boolean }>(r)),
+    stopQueue: () =>
+      authFetch(`${base}/api/queue/stop`, { method: "POST" }).then((r) => json<{ ok: boolean }>(r)),
 
-  resetProgress: (id: string) =>
-    authFetch(`${BASE}/api/tasks/${id}/reset-progress`, { method: "POST" }).then((r) => json<{ ok: boolean }>(r)),
+    stopSlot: (slotId: number) =>
+      authFetch(`${base}/api/workers/${slotId}/stop`, { method: "POST" }).then((r) => json<{ ok: boolean }>(r)),
 
-  getTables: () =>
-    authFetch(`${BASE}/api/tables`).then((r) => json<{ usedTables: string[]; otherTables: string[] }>(r)),
+    resetProgress: (id: string) =>
+      authFetch(`${base}/api/tasks/${id}/reset-progress`, { method: "POST" }).then((r) => json<{ ok: boolean }>(r)),
 
-  getNewShops: (table: string, params?: DateParams) => {
-    const p = new URLSearchParams();
-    if (params?.since) p.set("since", params.since);
-    if (params?.until) p.set("until", params.until);
-    if (params?.order) p.set("order", params.order);
-    const qs = p.toString() ? `?${p}` : "";
-    return authFetch(`${BASE}/api/analysis/${encodeURIComponent(table)}/new-shops${qs}`).then((r) =>
-      json<{ data: Record<string, unknown>[] }>(r)
-    );
-  },
+    getTables: () =>
+      authFetch(`${base}/api/tables`).then((r) => json<{ usedTables: string[]; otherTables: string[] }>(r)),
 
-  getMissingShops: (table: string, params?: DateParams) => {
-    const p = new URLSearchParams();
-    if (params?.since) p.set("since", params.since);
-    if (params?.until) p.set("until", params.until);
-    if (params?.order) p.set("order", params.order);
-    const qs = p.toString() ? `?${p}` : "";
-    return authFetch(`${BASE}/api/analysis/${encodeURIComponent(table)}/missing-shops${qs}`).then((r) =>
-      json<{ data: Record<string, unknown>[] }>(r)
-    );
-  },
+    getNewShops: (table: string, params?: DateParams) => {
+      const p = new URLSearchParams();
+      if (params?.since) p.set("since", params.since);
+      if (params?.until) p.set("until", params.until);
+      if (params?.order) p.set("order", params.order);
+      const qs = p.toString() ? `?${p}` : "";
+      return authFetch(`${base}/api/analysis/${encodeURIComponent(table)}/new-shops${qs}`).then((r) =>
+        json<{ data: Record<string, unknown>[] }>(r)
+      );
+    },
 
-  getEvents: (table: string, eventType: string, params?: DateParams) => {
-    const p = new URLSearchParams({ event_type: eventType });
-    if (params?.since) p.set("since", params.since);
-    if (params?.until) p.set("until", params.until);
-    if (params?.order) p.set("order", params.order);
-    return authFetch(`${BASE}/api/analysis/${encodeURIComponent(table)}/events?${p}`).then((r) =>
-      json<{ data: Record<string, unknown>[] }>(r)
-    );
-  },
+    getMissingShops: (table: string, params?: DateParams) => {
+      const p = new URLSearchParams();
+      if (params?.since) p.set("since", params.since);
+      if (params?.until) p.set("until", params.until);
+      if (params?.order) p.set("order", params.order);
+      const qs = p.toString() ? `?${p}` : "";
+      return authFetch(`${base}/api/analysis/${encodeURIComponent(table)}/missing-shops${qs}`).then((r) =>
+        json<{ data: Record<string, unknown>[] }>(r)
+      );
+    },
 
-  getAllShops: (table: string, params?: DateParams) => {
-    const p = new URLSearchParams();
-    if (params?.since) p.set("since", params.since);
-    if (params?.until) p.set("until", params.until);
-    if (params?.order) p.set("order", params.order);
-    const qs = p.toString() ? `?${p}` : "";
-    return authFetch(`${BASE}/api/analysis/${encodeURIComponent(table)}/all-shops${qs}`).then((r) =>
-      json<{ data: Record<string, unknown>[] }>(r)
-    );
-  },
-};
+    getEvents: (table: string, eventType: string, params?: DateParams) => {
+      const p = new URLSearchParams({ event_type: eventType });
+      if (params?.since) p.set("since", params.since);
+      if (params?.until) p.set("until", params.until);
+      if (params?.order) p.set("order", params.order);
+      return authFetch(`${base}/api/analysis/${encodeURIComponent(table)}/events?${p}`).then((r) =>
+        json<{ data: Record<string, unknown>[] }>(r)
+      );
+    },
+
+    getAllShops: (table: string, params?: DateParams) => {
+      const p = new URLSearchParams();
+      if (params?.since) p.set("since", params.since);
+      if (params?.until) p.set("until", params.until);
+      if (params?.order) p.set("order", params.order);
+      const qs = p.toString() ? `?${p}` : "";
+      return authFetch(`${base}/api/analysis/${encodeURIComponent(table)}/all-shops${qs}`).then((r) =>
+        json<{ data: Record<string, unknown>[] }>(r)
+      );
+    },
+  };
+}
+
+export type ApiClient = ReturnType<typeof createApi>;
+
+export const api = createApi(import.meta.env.VITE_API_URL ?? "");
+export const api2: ApiClient | null = import.meta.env.VITE_API_URL_2
+  ? createApi(import.meta.env.VITE_API_URL_2 as string)
+  : null;

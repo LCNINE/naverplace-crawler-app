@@ -5,7 +5,7 @@ import { Dashboard } from "./components/Dashboard";
 import { TaskManager } from "./components/TaskManager";
 import { AnalysisPage } from "./components/AnalysisPage";
 import { LoginPage } from "./components/LoginPage";
-import { getAuthToken, setAuthToken } from "./api";
+import { api, api2, getAuthToken, setAuthToken } from "./api";
 
 type Tab = "dashboard" | "tasks" | "analysis";
 
@@ -17,8 +17,12 @@ const TABS: { id: Tab; label: string }[] = [
 
 export default function App() {
   const [tab, setTab] = useState<Tab>("dashboard");
+  const [activeContainer, setActiveContainer] = useState<1 | 2>(1);
   const [authed, setAuthed] = useState(() => !!getAuthToken());
-  const { state, error, refresh } = useQueueState();
+  const { state, error, refresh: refresh1 } = useQueueState(api);
+  const { state: state2, refresh: refresh2 } = useQueueState(api2);
+
+  const refresh = () => { refresh1(); refresh2(); };
 
   const handleLogout = () => {
     setAuthToken(null);
@@ -55,7 +59,18 @@ export default function App() {
                     : "bg-gray-700 text-gray-400"
                 }`}
               >
-                {state.running ? "실행 중" : "정지"}
+                C1 {state.running ? "실행 중" : "정지"}
+              </span>
+            )}
+            {api2 && state2 && (
+              <span
+                className={`text-xs px-2 py-0.5 rounded-full ${
+                  state2.running
+                    ? "bg-green-900/60 text-green-300"
+                    : "bg-gray-700 text-gray-400"
+                }`}
+              >
+                C2 {state2.running ? "실행 중" : "정지"}
               </span>
             )}
           </div>
@@ -98,10 +113,41 @@ export default function App() {
         ) : (
           <>
             {tab === "dashboard" && (
-              <Dashboard state={state} onRefresh={refresh} />
+              <Dashboard
+                state={state}
+                onRefresh={refresh1}
+                apiClient={api}
+                state2={state2}
+                onRefresh2={refresh2}
+                apiClient2={api2}
+              />
             )}
             {tab === "tasks" && (
-              <TaskManager tasks={state.tasks} onRefresh={refresh} />
+              <div className="flex flex-col gap-4">
+                {api2 && (
+                  <div className="flex gap-1 p-1 bg-gray-800 rounded-lg self-start">
+                    <button
+                      onClick={() => setActiveContainer(1)}
+                      className={`px-4 py-1.5 rounded-md text-sm font-medium transition-colors ${activeContainer === 1 ? "bg-gray-600 text-white" : "text-gray-400 hover:text-white"}`}
+                    >
+                      컨테이너 1
+                    </button>
+                    <button
+                      onClick={() => setActiveContainer(2)}
+                      className={`px-4 py-1.5 rounded-md text-sm font-medium transition-colors ${activeContainer === 2 ? "bg-gray-600 text-white" : "text-gray-400 hover:text-white"}`}
+                    >
+                      컨테이너 2
+                    </button>
+                  </div>
+                )}
+                {activeContainer === 1 ? (
+                  <TaskManager tasks={state.tasks} onRefresh={refresh1} apiClient={api} />
+                ) : (
+                  state2
+                    ? <TaskManager tasks={state2.tasks} onRefresh={refresh2} apiClient={api2!} />
+                    : <div className="text-center py-12 text-gray-500">컨테이너 2 연결 중...</div>
+                )}
+              </div>
             )}
             {tab === "analysis" && (
               <AnalysisPage tasks={state.tasks} />
