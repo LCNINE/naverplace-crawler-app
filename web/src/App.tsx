@@ -20,7 +20,7 @@ export default function App() {
   const [activeContainer, setActiveContainer] = useState<1 | 2>(1);
   const [authed, setAuthed] = useState(() => !!getAuthToken());
   const { state, error, refresh: refresh1 } = useQueueState(api);
-  const { state: state2, refresh: refresh2 } = useQueueState(api2);
+  const { state: state2, error: error2, refresh: refresh2 } = useQueueState(api2);
 
   const refresh = () => { refresh1(); refresh2(); };
 
@@ -145,7 +145,9 @@ export default function App() {
                 ) : (
                   state2
                     ? <TaskManager tasks={state2.tasks} onRefresh={refresh2} apiClient={api2!} />
-                    : <div className="text-center py-12 text-gray-500">컨테이너 2 연결 중...</div>
+                    : error2
+                      ? <div className="text-center py-12 text-red-400 text-sm">컨테이너 2 연결 실패: {error2}</div>
+                      : <div className="text-center py-12 text-gray-500">컨테이너 2 연결 중...</div>
                 )}
               </div>
             )}
