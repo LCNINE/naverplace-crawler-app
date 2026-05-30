@@ -82,10 +82,33 @@ const DEFAULT_LAUNCH_ARGS = [
   "--disable-dev-shm-usage",
   "--disable-web-security",
   "--disable-features=VizDisplayCompositor",
+  // navigator.webdriver=true 및 자동화 배너를 제거 — 네이버 봇 탐지 회피의 핵심.
+  "--disable-blink-features=AutomationControlled",
 ];
 
+// 실제 크롬과 동일한 형식의 UA. 기존 값은 "Chrome Safari" 처럼 버전 번호가 빠져 있어
+// 그 자체로 봇 신호였다. Chromium 메이저 버전에 맞춰 주기적으로 갱신할 것.
 const DEFAULT_USER_AGENT =
-  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome Safari/537.36";
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
+
+const DEFAULT_LOCALE = "ko-KR";
+const DEFAULT_TIMEZONE = "Asia/Seoul";
+
+// 신규 페이지마다 주입해 자동화 흔적을 지운다. webdriver 플래그, languages,
+// plugins, window.chrome 등 headless/Playwright 가 남기는 대표적인 fingerprint 를 보정.
+const STEALTH_INIT_SCRIPT = `
+  Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+  Object.defineProperty(navigator, 'languages', { get: () => ['ko-KR', 'ko', 'en-US', 'en'] });
+  Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
+  if (!window.chrome) { window.chrome = { runtime: {} }; }
+  const _origQuery = window.navigator.permissions && window.navigator.permissions.query;
+  if (_origQuery) {
+    window.navigator.permissions.query = (params) =>
+      params && params.name === 'notifications'
+        ? Promise.resolve({ state: Notification.permission })
+        : _origQuery(params);
+  }
+`;
 
 export class PlaywrightController implements BrowserController {
   private browser?: Browser;
@@ -119,6 +142,8 @@ export class PlaywrightController implements BrowserController {
           args: DEFAULT_LAUNCH_ARGS,
           viewport: { width: 1400, height: 900 },
           userAgent: DEFAULT_USER_AGENT,
+          locale: DEFAULT_LOCALE,
+          timezoneId: DEFAULT_TIMEZONE,
           ...(executablePath ? { executablePath } : {}),
         }
       );
@@ -144,12 +169,15 @@ export class PlaywrightController implements BrowserController {
     return await this.browser!.newContext({
       viewport: { width: 1400, height: 900 },
       userAgent: DEFAULT_USER_AGENT,
+      locale: DEFAULT_LOCALE,
+      timezoneId: DEFAULT_TIMEZONE,
     });
   }
 
   async newPage(): Promise<Page> {
     const ctx = await this.newContext();
     const page = await ctx.newPage();
+    await page.addInitScript(STEALTH_INIT_SCRIPT);
     page.on("crash", () => this.opts.log.warn("page.crash"));
     page.on("console", (msg) => {
       const text = msg.text();

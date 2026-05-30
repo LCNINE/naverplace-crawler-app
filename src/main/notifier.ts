@@ -14,6 +14,7 @@ export type NotificationCategory =
   | "iframe_missing"
   | "session_fatal"
   | "session_completed"
+  | "session_restarted"
   | "test";
 
 const COOLDOWN_MS: Record<NotificationCategory, number> = {
@@ -22,6 +23,7 @@ const COOLDOWN_MS: Record<NotificationCategory, number> = {
   iframe_missing: 30 * 60 * 1000,
   session_fatal: 60 * 1000, // 1분 (재시작 직후 다시 깨지는 케이스 빠르게 감지)
   session_completed: 0, // 완료는 매번 보냄
+  session_restarted: 0, // 재시작 알림은 매번 보냄
   test: 0, // 테스트는 쿨다운 없음
 };
 

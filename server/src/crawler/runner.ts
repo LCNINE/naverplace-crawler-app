@@ -12,10 +12,12 @@ import {
   goToNextPage,
   goToSpecificPage,
   getCurrentPageNumber,
+  type ListItem,
 } from "./naver/map.list.js";
 import { extractDetail } from "./naver/map.detail.js";
 import { findSearchFrameByUrl } from "./utils/selectors.js";
 import { matchesCategory } from "./utils/category-match.js";
+import { humanDelay } from "./utils/human.js";
 import { notifyChat } from "../notifier.js";
 import type { Logger } from "./logging/logger.js";
 import type { IPlaceRepo } from "./extractors/repository.js";
@@ -35,8 +37,11 @@ async function detectIpBlock(page: Page): Promise<boolean> {
 
     const t = bodyText.toLowerCase();
     if (t.includes("비정상적인 접근")) return true;
+    if (t.includes("비정상적인 검색")) return true;
     if (t.includes("ip") && (t.includes("차단") || t.includes("제한") || t.includes("block"))) return true;
     if (t.includes("이용이 제한")) return true;
+    if (t.includes("일시적으로 제한")) return true;
+    if (t.includes("자동 등록 방지") || t.includes("자동입력 방지")) return true;
     if (t.includes("보안 인증") && !t.includes("네이버 지도")) return true;
   } catch {
     // ignore
@@ -431,6 +436,52 @@ export class CrawlSession {
     }
   }
 
+  /**
+   * 1페이지에서 0건이 나왔을 때, 그게 "진짜 빈 동"인지 "차단/일시 실패"인지 가린다.
+   *  1) 차단 시그널이 보이면 즉시 IP_BLOCK 으로 승격 → 기존 백오프/재시도/알림 흐름을 탄다.
+   *  2) 시그널이 없으면 soft block 또는 일시 로딩 실패일 수 있으니 재검색을 2회까지 시도.
+   *     한 번이라도 항목이 나오면 그걸 반환(빈 동 오판 회피), 끝까지 0건이면 진짜 빈 동.
+   * 이전 버전은 0건을 무조건 "빈 동"으로 처리해 soft block 으로 누락된 데이터를
+   * 정상으로 오인했다 — 빨래방 1400건 누락의 핵심 원인.
+   */
+  private async recoverEmptyFirstPage(
+    city: string,
+    district: string,
+    dong: string,
+    keyword: string
+  ): Promise<ListItem[]> {
+    const { logger } = this.opts;
+    if (!this.page) return [];
+
+    if (await detectIpBlock(this.page)) {
+      logger.warn("🚫 1페이지 0건 + IP 차단 시그널 → 차단 처리");
+      throw new Error(`${IP_BLOCK_ERROR}: ${district} ${dong}`);
+    }
+
+    const EMPTY_RETRY = 2;
+    for (let r = 1; r <= EMPTY_RETRY; r++) {
+      logger.warn(`🔍 ${city} ${district} ${dong} 1페이지 0건 — 재검색 ${r}/${EMPTY_RETRY}`);
+      await humanDelay(this.page, 4000, 8000);
+      await runSearch(this.page, `${district} ${dong} ${keyword}`, logger);
+
+      if (await detectIpBlock(this.page)) {
+        logger.warn("🚫 재검색 중 IP 차단 시그널 → 차단 처리");
+        throw new Error(`${IP_BLOCK_ERROR}: ${district} ${dong}`);
+      }
+
+      const retried = await collectListItems(this.page, logger);
+      if (retried.length > 0) {
+        logger.info(
+          `✅ 재검색 ${r}회차에서 ${retried.length}건 수집 — 빈 동 오판 회피`
+        );
+        return retried;
+      }
+    }
+
+    logger.info("🪹 재검색 후에도 0건 — 실제 빈 동으로 간주");
+    return [];
+  }
+
   private async processOne(args: ProcessOneArgs): Promise<void> {
     const { logger, placesRepo, signal, keyword } = this.opts;
     const { city, district, dong, resumePage, resumeListIndex } = args;
@@ -467,7 +518,13 @@ export class CrawlSession {
     while (!this.stopped) {
       if (signal.aborted) break;
 
-      const items = await collectListItems(this.page, logger);
+      let items = await collectListItems(this.page, logger);
+
+      // 1페이지 0건 → 진짜 빈 동인지 차단/일시 실패인지 구분 (차단이면 IP_BLOCK throw)
+      if (items.length === 0 && this.currentPage === 1 && firstIteration) {
+        items = await this.recoverEmptyFirstPage(city, district, dong, keyword);
+      }
+
       if (items.length === 0) {
         // 1페이지에서 0건 = iframe 못 찾았거나 selector 깨짐 의심.
         // 단순히 그 동이 비어있을 수도 있어 즉시 알림은 보내지 않고 카운터만 증가,
@@ -569,6 +626,9 @@ export class CrawlSession {
           logger.warn(`⚠️ click failed for ${i}th item`);
           continue;
         }
+
+        // 가게 간 사람처럼 보이는 짧은 텀 — 클릭 직후 detail 추출 전에 둔다.
+        await humanDelay(this.page, 700, 1800);
 
         try {
           const detail = await extractDetail(
@@ -673,7 +733,7 @@ export class CrawlSession {
         logger.info("📌 더 이상 페이지가 없음");
         break;
       }
-      await this.page.waitForTimeout(800);
+      await humanDelay(this.page, 1500, 3500);
     }
 
     const savedInThisDong = this.processed - processedAtStart;
