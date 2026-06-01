@@ -64,6 +64,8 @@ async function detectIpBlock(page: Page): Promise<boolean> {
 // 자동 종료 / 알림 임계치
 const MAX_CONSECUTIVE_SAVE_FAILURES = 10;  // 도달 시 세션 종료 + critical 알림
 const ALERT_EMPTY_DONGS = 10;              // 알림만 (종료 X)
+const ALERT_NO_PLACE_ID_RATIO = 0.3;       // 동 내 place_id 누락 비율이 이 이상이면 알림 (추출 열화 의심)
+const ALERT_NO_PLACE_ID_MIN_SAMPLE = 5;    // 표본 너무 적으면 알림 안 함(노이즈 방지)
 // 구조 깨짐(StructureAssertError)이 연속으로 누적되면 차단/구조변경 확정에 가까움 →
 // 이 임계에 도달하면 세션을 멈추고 critical 알림을 보낸다(동영님: 멈추고 보고).
 const ABORT_STRUCTURE_BROKEN = 5;
@@ -598,6 +600,7 @@ export class CrawlSession {
     recorder?.marker(`dong_start ${city} ${district} ${dong}`);
     let collected = 0; // 추출 시도 성공 건수
     let saved = 0; // raw insert 성공 건수
+    let noPlaceId = 0; // saved 중 place_id 없음(=canonical 제외 예정) 건수
     let runStarted = false;
     try {
       await rawRepo.startRun({
@@ -786,6 +789,7 @@ export class CrawlSession {
               scrapedAt: detail.scraped_at,
             });
             saved += 1;
+            if (!detail.place_id) noPlaceId += 1;
             this.processed += 1;
             this.consecutiveSaveFailures = 0;
             this.emitProgress();
@@ -910,6 +914,27 @@ export class CrawlSession {
               `finishRun(completed) 실패: ${e instanceof Error ? e.message : String(e)}`
             )
           );
+
+        // place_id 누락 비율이 높으면 추출이 조용히 망가지는 신호 → 알림 (빨래방 누락 재발 방지).
+        // place_id 는 네이버 플레이스 URL 에 항상 있으므로, 누락 다발 = 셀렉터 깨짐/차단 의심.
+        if (
+          !this.stopped &&
+          saved >= ALERT_NO_PLACE_ID_MIN_SAMPLE &&
+          noPlaceId / saved >= ALERT_NO_PLACE_ID_RATIO
+        ) {
+          await notifyChat({
+            category: "high_exclusion",
+            severity: "warning",
+            title: `place_id 누락 ${Math.round((noPlaceId / saved) * 100)}% — 추출 열화 의심`,
+            context: {
+              "검색어": keyword,
+              "위치": `${city} ${district} ${dong}`,
+              "세션 ID": this.opts.sessionId,
+              "저장/누락": `${saved}건 중 ${noPlaceId}건 place_id 없음 (canonical 제외 예정)`,
+              "권장 조치": "detail 추출 셀렉터/차단 여부 확인.",
+            },
+          }).catch(() => undefined);
+        }
       }
       recorder?.finalizeSuccess({ city, district, dong, collected, saved });
     } catch (err) {

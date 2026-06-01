@@ -6,7 +6,7 @@
 
 - **Electron 데스크톱 앱** (`src/main`, `src/renderer`, `src/preload`) — **유일한 운영 방식**(사무실 노트북). 크롤러 코드는 `src/main/crawler/**`.
 
-> ℹ️ 과거엔 `server/`(Express, Railway) + `web/`(대시보드)에 크롤러 코드가 **중복**돼 있었으나, 데이터센터 IP 차단 위험 때문에 **`server/`는 삭제(2026-06-01)** 하고 노트북 단독 운영으로 일원화했다. → 더 이상 양쪽 동기화 불필요. (`web/`는 server 전용 대시보드라 함께 폐지 대상 — 잔존 시 정리)
+> ℹ️ 과거엔 `server/`(Express, Railway) + `web/`(대시보드)에 크롤러 코드가 **중복**돼 있었으나, 데이터센터 IP 차단 위험 때문에 **`server/`는 삭제(2026-06-01)** 하고 노트북 단독 운영으로 일원화했다. → 더 이상 양쪽 동기화 불필요. (`web/`도 server 전용 대시보드라 함께 **삭제**)
 
 ---
 
@@ -90,7 +90,7 @@ SELECT * FROM extract_latest_places('coin_laundry');           -- 원장에서 �
 - IP 차단 시 **점증 백오프** (`IP_BLOCK_BACKOFF_MIN`, 기본 `30,120,240`분) 후 멈추고 구글챗 보고.
 - 이미지/미디어/폰트 요청 차단(`core/browser.ts`) — 속도↑·대역폭↓·차단위험↓.
 - **진행 상태(progress)는 각 PC 로컬 파일**(`userData/progress.json`) — **컴퓨터 간 공유 안 됨**. 재시작 시 화면에서 "이어서 계속하기"를 체크해야 이어간다. 여러 대로 나눌 땐 지역/업종을 분할(겹치면 같은 동 중복 크롤).
-- 알림: Google Chat webhook(`notifier.ts`) — `blocked_backoff`, `structure_broken`, `save_failures`, `empty_dongs` 등.
+- 알림: Google Chat webhook(`notifier.ts`) — `blocked_backoff`, `structure_broken`, `save_failures`, `empty_dongs`, **`high_exclusion`**(동 내 place_id 누락 비율 ≥30% = 추출 열화, run 완료 시 `runner.ts`), **`canonical_drift`**(세션 시작 시 야간 reconcile 드리프트 감지, `ipc/crawler.ts`) 등.
 
 ---
 
@@ -98,7 +98,7 @@ SELECT * FROM extract_latest_places('coin_laundry');           -- 원장에서 �
 
 - **Electron 앱**(유일 운영): `npm run dev`(개발) · `npm run build`(electron-vite) · `npm run typecheck` · `npm run dist:mac` / `dist:win`(배포)
 - ~~서버~~: `server/`는 **삭제됨**(2026-06-01, 데이터센터 IP 차단 위험). Railway 운영 폐지 — 아직 Railway에 떠 있으면 **서비스 중지** 필요.
-- ~~웹 대시보드~~: `web/`는 server 전용 대시보드라 함께 폐지 대상. canonical 추출은 `canonical_places`/뷰 또는 `extract_latest_places()` SQL로.
+- ~~웹 대시보드~~: `web/`는 **삭제됨**(server 전용 대시보드라 함께 폐지). canonical 추출은 `canonical_places`/뷰 또는 `extract_latest_places()` SQL로.
 
 ---
 

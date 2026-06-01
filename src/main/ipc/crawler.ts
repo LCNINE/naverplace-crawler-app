@@ -115,6 +115,24 @@ export function registerCrawlerIpc(mainWindow: BrowserWindow) {
       url: secrets.url,
       key: secrets.anonKey,
     });
+    // 세션 시작 시 canonical 트리거 정합성 점검 — 야간 reconcile 이 드리프트를 잡았으면 알림.
+    void rawRepo
+      .getRecentDrift()
+      .then((d) => {
+        if (d && d.driftCount > 0) {
+          return notifyChat({
+            category: "canonical_drift",
+            severity: "warning",
+            title: `canonical 드리프트 ${d.driftCount}건 — 야간 정합성 점검에서 교정됨`,
+            context: {
+              "발생 시각": new Date(d.ranAt).toLocaleString("ko-KR"),
+              "의미":
+                "run완료 트리거가 일부 누락 → reconcile 이 자동 교정. 반복되면 트리거 로직 점검 필요.",
+            },
+          });
+        }
+      })
+      .catch(() => undefined);
     // canonical category — secrets.table('coin_laundry_v2') → 'coin_laundry'
     const category = secrets.table
       ? secrets.table.replace(/_v\d+$/i, "")

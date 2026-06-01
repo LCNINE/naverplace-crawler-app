@@ -14,6 +14,8 @@ export type NotificationCategory =
   | "iframe_missing"
   | "blocked_backoff"
   | "structure_broken"
+  | "high_exclusion"
+  | "canonical_drift"
   | "session_fatal"
   | "session_completed"
   | "session_restarted"
@@ -26,6 +28,8 @@ const COOLDOWN_MS: Record<NotificationCategory, number> = {
   // 차단 백오프 진입/종료는 매번 사람이 인지해야 하므로 쿨다운 없음
   blocked_backoff: 0,
   structure_broken: 5 * 60 * 1000,
+  high_exclusion: 30 * 60 * 1000, // 30분
+  canonical_drift: 12 * 60 * 60 * 1000, // 12시간 (드리프트 보고는 드물게)
   session_fatal: 60 * 1000, // 1분 (재시작 직후 다시 깨지는 케이스 빠르게 감지)
   session_completed: 0, // 완료는 매번 보냄
   session_restarted: 0, // 재시작 알림은 매번 보냄

@@ -88,4 +88,25 @@ export class SupabaseRawRepo implements RawCrawlRepo {
       throw new Error(`crawl_runs update 실패: ${error.message}`);
     }
   }
+
+  /**
+   * canonical_reconcile_log 에서 최근 48h 내 드리프트(>0) 1건 조회.
+   * 야간 reconcile 이 트리거 누락을 교정한 흔적 — 세션 시작 시 정합성 점검용. 없으면 null.
+   */
+  async getRecentDrift(): Promise<{ driftCount: number; ranAt: string } | null> {
+    const since = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString();
+    const { data, error } = await this.client
+      .from("canonical_reconcile_log")
+      .select("drift_count, ran_at")
+      .gt("drift_count", 0)
+      .gte("ran_at", since)
+      .order("ran_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (error || !data) return null;
+    return {
+      driftCount: data.drift_count as number,
+      ranAt: data.ran_at as string,
+    };
+  }
 }
