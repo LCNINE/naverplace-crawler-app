@@ -4,10 +4,9 @@
 
 네이버 플레이스에서 **업종별 매장 정보**(빨래방/헤어/네일/속눈썹/왁싱/피부/타투 등)를 크롤링한다.
 
-- **Electron 데스크톱 앱** (`src/main`, `src/renderer`, `src/preload`) — **현재 주 운영 방식**(사무실 노트북).
-- **서버 버전** (`server/`) — Express + 웹 대시보드(`web/`). Railway 배포 가능하나 차단 위험으로 **비권장**.
+- **Electron 데스크톱 앱** (`src/main`, `src/renderer`, `src/preload`) — **유일한 운영 방식**(사무실 노트북). 크롤러 코드는 `src/main/crawler/**`.
 
-> ⚠️ `server/`와 `src/main/`에 크롤러 코드(`crawler/**`)가 **거의 동일하게 중복**되어 있다. 한쪽을 고치면 **반드시 양쪽을 동기화**할 것. (대부분 파일은 byte-identical이라 `cp`로 미러 가능, `runner.ts`/`core/browser.ts`만 환경차 있음)
+> ℹ️ 과거엔 `server/`(Express, Railway) + `web/`(대시보드)에 크롤러 코드가 **중복**돼 있었으나, 데이터센터 IP 차단 위험 때문에 **`server/`는 삭제(2026-06-01)** 하고 노트북 단독 운영으로 일원화했다. → 더 이상 양쪽 동기화 불필요. (`web/`는 server 전용 대시보드라 함께 폐지 대상 — 잔존 시 정리)
 
 ---
 
@@ -35,19 +34,27 @@
 | 테이블           | 역할                                                                                                                                                                                                                                                                                                           |
 | ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **`raw_places`** | 크롤링 원본 원장. **append-only**(UPDATE/DELETE 금지 트리거 `trg_raw_places_no_mutation`). 모든 업종이 한 테이블, `category` 컬럼으로 구분. `payload`(jsonb)에 추출 원본 통째(shop_name/phone/address/...). `place_id` nullable, `partial` 플래그. 같은 가게를 또 긁으면 **새 row로 중복 누적**(추출 시 정리). |
-| **`crawl_runs`** | 크롤링 실행 단위 = **동(dong) 1개 = 1 run**. `status`(running/completed/blocked/assert_failed/error/aborted), `host`(어느 노트북), `category`, `saved_count` 등.                                                                                                                                               |
+| **`crawl_runs`** | 크롤링 실행 단위 = **동(dong) 1개 = 1 run**. `status`(running/completed/blocked/assert_failed/error/aborted — **CHECK 제약**), `host`(어느 노트북), `category`, `saved_count`, **`excluded_no_place_id`/`excluded_partial`**(canonical 제외 카운트 = 무음 손실 가시화) 등. run이 `completed`로 바뀌면 **트리거**가 그 run의 raw를 `canonical_places`로 증분 반영.                                                                                                                                               |
 
-**canonical은 테이블이 아니라 함수다** — 필요할 때 추출:
+**Medallion 2층 (이 레포는 Bronze+Silver만):**
+
+- **Bronze** = `raw_places`(append-only 원장) + `crawl_runs`(run 메타). 정규화 X.
+- **Silver** = `canonical_places`(물리 테이블, 중복제거+정규화) + 업종별 뷰(`coin_canonical` 등).
+- **Gold** = 문자 발송 등 운영 상태 → **별도 SMS 프로젝트**가 canonical을 읽어 소유. **이 레포엔 없음**.
+
+**canonical 채우기는 자동이다(사람 손 X):** run이 `completed`되면 트리거 `sync_canonical_on_run_complete()`가 그 run의 raw를 `canonical_places`로 **증분 upsert(최신 승리, 멀티PC 뒤섞임 안전)**. 매일 새벽(pg_cron `0 18 * * *` = 03:00 KST) `reconcile_canonical_places()`가 **전체 재계산으로 드리프트 교정 + `canonical_reconcile_log`에 기록**(drift>0이면 트리거 버그 조기경보).
+
+추출 함수 `extract_latest_places(category)`는 그대로 살아있다 — reconcile의 기준 로직이자 즉석 검증/CSV export용:
 
 ```sql
-SELECT * FROM extract_latest_places('coin_laundry');  -- 빨래방: completed run의 raw만, place_id별 최신 1건, 중복제거+정규화
-SELECT * FROM extract_latest_places();                 -- 전체
+SELECT * FROM canonical_places WHERE category='coin_laundry';  -- 평소 조회는 테이블/뷰
+SELECT * FROM extract_latest_places('coin_laundry');           -- 원장에서 즉석 재계산(검증용)
 ```
 
-→ Supabase SQL Editor에서 실행 후 CSV export. **실패/차단 run의 raw는 자동 제외**(빨래방 누락 재발 방지 핵심).
+→ **실패/차단 run의 raw는 canonical에서 자동 제외**(빨래방 누락 재발 방지 핵심). place_id 없음/partial 건도 제외하되 `crawl_runs.excluded_*`에 카운트로 남긴다.
 
 - 기존 v2 테이블(`coin_laundry_v2`, `hair_shops_v2` 등)은 **보존만** 하고 신규 저장은 안 함.
-- 운영 관측: `GET /api/runs`(server) 또는 `crawl_runs` 직접 조회 — 어느 동이 blocked/assert_failed인지.
+- 운영 관측: `crawl_runs` 직접 조회(Supabase) — 어느 동이 blocked/assert_failed인지. (이전 `GET /api/runs`는 server 삭제로 폐지)
 
 ---
 
@@ -89,9 +96,9 @@ SELECT * FROM extract_latest_places();                 -- 전체
 
 ## 빌드 / 실행
 
-- **Electron 앱**: `npm run dev`(개발) · `npm run build`(electron-vite) · `npm run typecheck`(node+web) · `npm run dist:mac` / `dist:win`(배포)
-- **서버**: `cd server && npm run dev`(tsx) · `npm run build` · `npm start`
-- **웹 대시보드**: `web/` (Vite+React). 분석 조회 UI는 제거됨 — 추출은 `extract_latest_places()` SQL로.
+- **Electron 앱**(유일 운영): `npm run dev`(개발) · `npm run build`(electron-vite) · `npm run typecheck` · `npm run dist:mac` / `dist:win`(배포)
+- ~~서버~~: `server/`는 **삭제됨**(2026-06-01, 데이터센터 IP 차단 위험). Railway 운영 폐지 — 아직 Railway에 떠 있으면 **서비스 중지** 필요.
+- ~~웹 대시보드~~: `web/`는 server 전용 대시보드라 함께 폐지 대상. canonical 추출은 `canonical_places`/뷰 또는 `extract_latest_places()` SQL로.
 
 ---
 
@@ -99,9 +106,26 @@ SELECT * FROM extract_latest_places();                 -- 전체
 
 - 크롤 흐름: `crawler/runner.ts`(CrawlSession) · `naver/map.search.ts` · `map.list.ts` · `map.detail.ts`
 - 브라우저: `crawler/core/browser.ts` (Playwright, 스텔스 init script, 이미지 차단)
-- 저장: `storage/supabase.raw-repo.ts`(`RawCrawlRepo`) · `crawler/extractors/raw-repository.ts`(타입)
-- 주입: server는 `server/src/queue-manager.ts`(3슬롯) / `manager.ts`(WORKERS), Electron은 `src/main/ipc/crawler.ts`
+- 저장(Bronze): `storage/supabase.raw-repo.ts`(`RawCrawlRepo`, raw append-only insert + run 메타) · `crawler/extractors/raw-repository.ts`(타입). **canonical 채우기는 앱이 아니라 DB 트리거가 담당**.
+- Silver/canonical (전부 DB 객체): `canonical_places` 테이블 · `sync_canonical_on_run_complete()` 트리거 · `reconcile_canonical_places()`(pg_cron) · `extract_latest_places()` 함수 · 업종별 뷰(`coin_canonical` 등) · `canonical_reconcile_log`.
+- 주입: Electron `src/main/ipc/crawler.ts`. (server의 `queue-manager.ts`/`manager.ts`(WORKERS)는 삭제됨)
 - 알림: `notifier.ts` · 진행상태: `storage/progress.repo.ts`
 - DB 작업: Supabase MCP 또는 SQL Editor. 마이그레이션 이력은 Supabase에 기록됨.
 
 > 참고: `src/main/storage/schema.ts`(테이블 자동생성, `exec_sql` RPC 의존)는 v3에서 import 0건인 **죽은 코드**. 테이블은 마이그레이션으로 사전 생성하므로 런타임 DDL 불필요.
+
+---
+
+## Agent skills
+
+### Issue tracker
+
+이슈/PRD는 GitHub Issues(`LCNINE/naverplace-crawler-app`)에서 `gh` CLI로 관리한다. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+표준 5종 라벨(needs-triage / needs-info / ready-for-agent / ready-for-human / wontfix)을 이름 그대로 사용한다. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+단일 컨텍스트 — 루트 `CONTEXT.md` + `docs/adr/`. See `docs/agents/domain.md`.

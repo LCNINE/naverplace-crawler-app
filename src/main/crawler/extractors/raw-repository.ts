@@ -5,7 +5,9 @@ import type { ScrapedPlaceInfo } from "./place.js";
  *
  * 크롤러는 더 이상 정규화/upsert 하지 않는다. 추출 직후의 원본(payload)을
  * run_id/place_id/category/source 와 함께 append-only 로 적재만 하고,
- * 정규화(canonical 변환)는 DB 의 sync_canonical_places() 가 별도로 수행한다.
+ * 정규화(canonical 변환)는 DB 측이 수행한다 — run 이 completed 되면 트리거
+ * sync_canonical_on_run_complete() 가 canonical_places 로 증분 upsert(최신 승리),
+ * 매일 새벽 reconcile_canonical_places()(pg_cron) 가 전체 재계산으로 드리프트를 교정한다.
  *
  * run = 동(dong) 단위. crawl_runs row 하나 = "한 동에서의 한 번 크롤링".
  */
