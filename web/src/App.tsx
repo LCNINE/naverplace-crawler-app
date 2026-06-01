@@ -3,16 +3,14 @@ import { Toaster } from "sonner";
 import { useQueueState } from "./hooks/useQueueState";
 import { Dashboard } from "./components/Dashboard";
 import { TaskManager } from "./components/TaskManager";
-import { AnalysisPage } from "./components/AnalysisPage";
 import { LoginPage } from "./components/LoginPage";
 import { api, api2, getAuthToken, setAuthToken } from "./api";
 
-type Tab = "dashboard" | "tasks" | "analysis";
+type Tab = "dashboard" | "tasks";
 
 const TABS: { id: Tab; label: string }[] = [
   { id: "dashboard", label: "대시보드" },
   { id: "tasks", label: "작업 관리" },
-  { id: "analysis", label: "분석" },
 ];
 
 export default function App() {
@@ -150,9 +148,6 @@ export default function App() {
                       : <div className="text-center py-12 text-gray-500">컨테이너 2 연결 중...</div>
                 )}
               </div>
-            )}
-            {tab === "analysis" && (
-              <AnalysisPage tasks={state.tasks} />
             )}
           </>
         )}

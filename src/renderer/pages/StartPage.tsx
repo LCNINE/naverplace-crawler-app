@@ -34,10 +34,6 @@ export default function StartPage() {
   const [autoRestart, setAutoRestart] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [tableModal, setTableModal] = useState<null | {
-    sql: string;
-    canAuto: boolean;
-  }>(null);
   const [prefsLoaded, setPrefsLoaded] = useState(false);
 
   const dongs = useMemo(() => SEOUL[district] ?? [], [district]);
@@ -169,32 +165,15 @@ export default function StartPage() {
         hasServiceKey: boolean;
       }>("secrets:load");
       if (!sec.url || !sec.anonKey || !sec.table) {
-        setError("환경설정에서 Supabase 자격증명을 먼저 저장해 주세요.");
+        setError(
+          "환경설정에서 Supabase 자격증명과 업종 구분(category)을 먼저 저장해 주세요."
+        );
         return;
       }
 
-      const pre = await window.api.invoke<{
-        tableExists: boolean;
-        error?: string;
-      }>("crawler:preflight", { table: sec.table });
-
-      if (!pre.tableExists) {
-        const created = await window.api.invoke<{
-          ok: boolean;
-          sql?: string;
-          error?: string;
-        }>("crawler:create-table", {
-          table: sec.table,
-          useServiceKey: sec.hasServiceKey,
-        });
-        if (!created.ok) {
-          setTableModal({
-            sql: created.sql ?? "",
-            canAuto: sec.hasServiceKey,
-          });
-          return;
-        }
-      }
+      // v3 Data Lake: 모든 데이터는 raw_places 에 적재되고 업종 구분은 category 컬럼으로
+      // 한다. 따라서 업종별 테이블 존재확인/생성이 더 이상 필요 없다.
+      // (sec.table 값은 category 라벨 유도에만 쓰인다 — 예: coin_laundry_v3 → coin_laundry)
 
       const payload =
         mode === "all_korea"
@@ -431,14 +410,6 @@ export default function StartPage() {
       </div>
 
       {error && <p className="text-sm text-rose-400">✗ {error}</p>}
-
-      {tableModal && (
-        <TableMissingModal
-          sql={tableModal.sql}
-          canAuto={tableModal.canAuto}
-          onClose={() => setTableModal(null)}
-        />
-      )}
     </div>
   );
 }
@@ -474,46 +445,3 @@ function Field({
   );
 }
 
-function TableMissingModal({
-  sql,
-  canAuto,
-  onClose,
-}: {
-  sql: string;
-  canAuto: boolean;
-  onClose: () => void;
-}) {
-  const [copied, setCopied] = useState(false);
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
-      <div className="w-full max-w-2xl rounded-lg border border-slate-700 bg-slate-900 p-5 shadow-xl">
-        <h3 className="text-lg font-semibold text-slate-100">
-          테이블이 존재하지 않습니다
-        </h3>
-        <p className="mt-1 text-sm text-slate-400">
-          {canAuto
-            ? "Service Role Key로 자동 생성을 시도했지만 실패했습니다. 아래 SQL을 Supabase 콘솔(SQL Editor)에 직접 실행해 주세요."
-            : "아래 SQL을 Supabase 콘솔(SQL Editor)에 붙여넣고 실행해 주세요. 또는 환경설정에서 Service Role Key를 입력하면 자동 생성을 시도합니다."}
-        </p>
-        <pre className="scrollbar-thin mt-3 max-h-72 overflow-auto rounded border border-slate-700 bg-slate-950 p-3 text-xs text-slate-200">
-          {sql}
-        </pre>
-        <div className="mt-4 flex items-center justify-end gap-2">
-          <button
-            className="btn-secondary"
-            onClick={async () => {
-              await navigator.clipboard.writeText(sql);
-              setCopied(true);
-              setTimeout(() => setCopied(false), 1500);
-            }}
-          >
-            {copied ? "복사됨 ✓" : "SQL 복사"}
-          </button>
-          <button className="btn-primary" onClick={onClose}>
-            확인
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}

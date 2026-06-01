@@ -1,11 +1,32 @@
 import type { Page, Frame } from "playwright";
 import { Logger } from "../logging/logger.js";
 import { searchFrame, findSearchFrameByUrl } from "../utils/selectors.js";
+import { StructureAssertError } from "../asserts.js";
 
 export interface ListItem {
   index: number;
   name: string;
   category?: string;
+}
+
+/**
+ * 검색 결과 프레임에 "검색 결과 없음" 류 마커가 떠 있는지 확인.
+ * 네이버가 명시적으로 '결과 없음'을 표시한 경우에만 진짜 빈 동으로 간주한다.
+ * 마커가 없는데 매장도 0개면 soft block/구조 변경 의심 → 호출부에서 throw.
+ */
+async function hasEmptyResultMarker(frame: Frame, log: Logger): Promise<boolean> {
+  try {
+    const text = await frame.evaluate(() => document.body?.innerText ?? "");
+    return /검색\s*결과가\s*없|조건에\s*맞는[^.]*없|결과가\s*없습니다|업체가\s*없|장소가\s*없|찾을\s*수\s*없습니다/.test(
+      text
+    );
+  } catch (e) {
+    // frame detached 등 → 마커 확인 불가 → 빈 동으로 단정하지 않음(false)
+    log.debug(
+      `empty-result marker check failed: ${e instanceof Error ? e.message : String(e)}`
+    );
+    return false;
+  }
 }
 
 export async function collectListItems(
@@ -17,8 +38,10 @@ export async function collectListItems(
   // lash_scraper_seoul.js의 성공적인 패턴으로 iframe 찾기 (실패 시 frame URL 진단 로그)
   let searchFrameElement = await findSearchFrameByUrl(page, log);
   if (!searchFrameElement) {
-    log.warn("Search result iframe not found");
-    return [];
+    // 위음성 방지: search iframe 을 못 찾으면 조용히 [] 를 반환하지 않는다.
+    // (차단/단일결과 직행/구조 변경 의심) — runner 가 차단 판정·재검색 후 최종 판단.
+    // 빨래방 1400건 누락의 근본 원인이 바로 이 지점의 "조용한 []" 였다.
+    throw new StructureAssertError("search_iframe_missing");
   }
 
   log.info("Search result iframe found");
@@ -343,23 +366,25 @@ export async function collectListItems(
     }
 
     log.info(`Total ${result.length} places collected`);
-    return result;
   } catch (error) {
     log.error(
       { error: error instanceof Error ? error.message : String(error) },
       "Error during place collection"
     );
+    // result>0 이면 아래 공통 반환부에서 그대로 반환된다. 0 이면 빈동마커 판정으로 흐른다.
+  }
 
-    // 에러가 발생해도 이미 수집된 항목들은 반환
-    if (result.length > 0) {
-      log.info(
-        `Returning ${result.length} already collected places despite error`
-      );
-      return result;
-    }
+  // 수집된 게 있으면 반환
+  if (result.length > 0) return result;
 
+  // 0건 — '검색 결과 없음' 마커가 명시적으로 있으면 진짜 빈 동, 없으면 구조/차단 의심으로 throw.
+  // (조용히 [] 를 반환하면 soft block 을 빈 동으로 오인하므로 절대 그렇게 하지 않는다)
+  const hasMarker = await hasEmptyResultMarker(searchFrameElement, log);
+  if (hasMarker) {
+    log.info("🪹 '검색 결과 없음' 마커 확인 — 실제 빈 동으로 처리");
     return [];
   }
+  throw new StructureAssertError("list_empty_no_marker");
 }
 
 export async function clickListItem(

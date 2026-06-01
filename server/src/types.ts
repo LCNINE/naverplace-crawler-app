@@ -4,6 +4,8 @@ export interface Task {
   id: string;
   keyword: string;
   table: string;
+  /** v3 canonical category 키. 없으면 table 에서 _v{n} 제거해 유도. */
+  category?: string;
   slowMo: number;
   collectMenu: boolean;
   extraCategoryKeywords: string[];

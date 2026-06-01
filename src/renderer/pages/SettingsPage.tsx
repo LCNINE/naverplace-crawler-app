@@ -182,13 +182,18 @@ export default function SettingsPage({ onSaved, userEmail }: Props) {
         />
       </Field>
 
-      <Field label="SUPABASE_TABLE (테이블명)" required>
+      <Field label="업종 구분 (category)" required>
         <input
           className="input"
-          placeholder="places"
+          placeholder="예: coin_laundry"
           value={table}
           onChange={(e) => setTable(e.target.value)}
         />
+        <p className="mt-1 text-xs text-slate-500">
+          데이터는 <code className="text-slate-400">raw_places</code> 테이블에 저장되고, 이 값은 업종 구분(category) 라벨로만 쓰입니다.
+          업종마다 다른 값을 넣으세요(예: <code className="text-slate-400">coin_laundry</code>, <code className="text-slate-400">hair_shops</code>).
+          별도 테이블을 만들 필요는 없습니다.
+        </p>
       </Field>
 
       <details

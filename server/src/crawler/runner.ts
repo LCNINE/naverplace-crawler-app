@@ -20,12 +20,24 @@ import { matchesCategory } from "./utils/category-match.js";
 import { humanDelay } from "./utils/human.js";
 import { notifyChat } from "../notifier.js";
 import type { Logger } from "./logging/logger.js";
-import type { IPlaceRepo } from "./extractors/repository.js";
+import type { RawCrawlRepo, RunStatus } from "./extractors/raw-repository.js";
+import { isStructureAssertError, StructureAssertError } from "./asserts.js";
+import type { RunRecorder } from "./logging/run-recorder.js";
 import { KOREA_CITIES } from "./config/korea-data.js";
+import { randomUUID } from "node:crypto";
 
 const IP_BLOCK_ERROR = "IP_BLOCK";
-const IP_BLOCK_WAIT_MS = 5 * 60 * 1000; // 5분 대기
 const IP_BLOCK_MAX_RETRIES = 3;
+// 점증 백오프 (분 단위). 동영님: 차단/0건이면 몇 시간 텀 두고 2~3회 재시도, 그래도
+// 안되면 멈추고 구글챗 보고. env IP_BLOCK_BACKOFF_MIN 으로 조정 (예: "30,120,240").
+const IP_BLOCK_BACKOFF_MIN = (process.env.IP_BLOCK_BACKOFF_MIN ?? "30,120,240")
+  .split(",")
+  .map((s) => parseInt(s.trim(), 10))
+  .filter((n) => Number.isFinite(n) && n > 0);
+function ipBlockBackoffMs(retry: number): number {
+  const arr = IP_BLOCK_BACKOFF_MIN.length > 0 ? IP_BLOCK_BACKOFF_MIN : [30, 120, 240];
+  return arr[Math.min(retry - 1, arr.length - 1)] * 60 * 1000;
+}
 
 async function detectIpBlock(page: Page): Promise<boolean> {
   try {
@@ -52,7 +64,9 @@ async function detectIpBlock(page: Page): Promise<boolean> {
 // 자동 종료 / 알림 임계치
 const MAX_CONSECUTIVE_SAVE_FAILURES = 10;  // 도달 시 세션 종료 + critical 알림
 const ALERT_EMPTY_DONGS = 10;              // 알림만 (종료 X)
-const ALERT_IFRAME_MISSING = 3;            // 알림만 (종료 X)
+// 구조 깨짐(StructureAssertError)이 연속으로 누적되면 차단/구조변경 확정에 가까움 →
+// 이 임계에 도달하면 세션을 멈추고 critical 알림을 보낸다(동영님: 멈추고 보고).
+const ABORT_STRUCTURE_BROKEN = 5;
 
 export type CrawlMode = "single" | "all_korea";
 
@@ -95,7 +109,19 @@ export interface CrawlSessionOptions {
   autoRestart?: boolean;
   /** Playwright persistent context 프로파일 경로 (서버에서 워커별 분리용) */
   userDataDir?: string;
-  placesRepo: IPlaceRepo;
+  /** v3 Data Lake 저장 레이어. 정규화 없이 raw 를 append-only 적재. */
+  rawRepo: RawCrawlRepo;
+  /** canonical category 키 (예: 'coin_laundry'). 없으면 keyword 사용. */
+  category?: string;
+  /** os.hostname() — crawl_runs/실패 dump 메타에 기록 (어느 노트북인지) */
+  host?: string;
+  /** QueueManager 슬롯 번호 */
+  slotId?: number;
+  /**
+   * 메모리버퍼 Logger. 주입하면 동(run) 단위로 reset/finalize 하며,
+   * run 실패 시 로그+스크린샷을 dump 한다. logger 는 보통 recorder.asLogger() 를 넘긴다.
+   */
+  recorder?: RunRecorder;
   logger: Logger;
   onProgress: (e: ProgressEvent) => void;
   signal: AbortSignal;
@@ -129,17 +155,18 @@ export class CrawlSession {
   private currentPage = 1;
   private currentListIndex = 0;
   private stopped = false;
+  /** 현재 처리 중인 동(run)의 id */
+  private currentRunId = "";
 
   // 알림/자동종료 카운터
   private consecutiveSaveFailures = 0;
   private consecutiveEmptyDongs = 0;
-  private consecutiveIframeMissing = 0;
+  private consecutiveStructureBroken = 0;
 
   // "이미 알림 발송함" 플래그 — 한번 true 되면 세션 종료까지 sticky.
   // 자연 분포(시골/변두리 동) 에서도 임계 누적이 잦아 false positive 가 빈번하므로
   // 카테고리당 세션 1회만 알림. 사용자가 정지 후 다시 시작하면 새 세션이라 다시 알림 가능.
   private alertedEmptyDongs = false;
-  private alertedIframeMissing = false;
 
   constructor(private opts: CrawlSessionOptions) {
     this.browser = new PlaywrightController({
@@ -288,7 +315,7 @@ export class CrawlSession {
   }
 
   private async runAllKorea(): Promise<void> {
-    const { logger } = this.opts;
+    const { logger, keyword } = this.opts;
     const cities = Object.keys(KOREA_CITIES);
     let startCi = this.opts.resumeFrom?.cityIndex ?? 0;
     let startDi = this.opts.resumeFrom?.districtIndex ?? 0;
@@ -310,10 +337,9 @@ export class CrawlSession {
         }).catch(() => undefined);
         // 재시작 시에는 카운터/알림 플래그 리셋
         this.consecutiveEmptyDongs = 0;
-        this.consecutiveIframeMissing = 0;
+        this.consecutiveStructureBroken = 0;
         this.consecutiveSaveFailures = 0;
         this.alertedEmptyDongs = false;
-        this.alertedIframeMissing = false;
       }
 
       logger.info(
@@ -368,6 +394,8 @@ export class CrawlSession {
                     ? this.opts.resumeFrom?.listIndex
                     : undefined,
                 });
+                // 정상 처리(빈 동 확인 포함) → 구조 깨짐 카운터 리셋
+                this.consecutiveStructureBroken = 0;
                 break;
               } catch (err) {
                 const msg = err instanceof Error ? err.message : String(err);
@@ -379,16 +407,67 @@ export class CrawlSession {
 
                 if (msg.startsWith(`${IP_BLOCK_ERROR}:`)) {
                   ipBlockRetry++;
+                  const waitMs = ipBlockBackoffMs(ipBlockRetry);
                   if (ipBlockRetry > IP_BLOCK_MAX_RETRIES) {
-                    logger.error(`🚫 IP 차단 재시도 ${IP_BLOCK_MAX_RETRIES}회 초과, 다음 동으로 넘어감`);
-                    break;
+                    // 동영님 방향: 다음 동으로 슬쩍 넘어가지 않고 멈추고 보고한다.
+                    await notifyChat({
+                      category: "blocked_backoff",
+                      severity: "critical",
+                      title: `IP 차단 ${IP_BLOCK_MAX_RETRIES}회 백오프 실패 — 세션 자동 종료`,
+                      context: {
+                        "검색어": keyword,
+                        "최근 위치": `${city} ${district} ${dong}`,
+                        "세션 ID": this.opts.sessionId,
+                        "권장 조치":
+                          "IP 변경 / 동시 슬롯 축소(MAX_SLOTS↓) / 잠시 후 재개 권장.",
+                      },
+                    }).catch(() => undefined);
+                    throw new Error(
+                      `CRAWL_ABORT: IP 차단 백오프 ${IP_BLOCK_MAX_RETRIES}회 초과 — 세션 종료 (${city} ${district} ${dong})`
+                    );
                   }
                   logger.warn(
-                    `🚫 IP 차단 감지 — ${IP_BLOCK_WAIT_MS / 60000}분 대기 후 재시도 (${ipBlockRetry}/${IP_BLOCK_MAX_RETRIES})`
+                    `🚫 IP 차단 감지 — ${Math.round(waitMs / 60000)}분 대기 후 재시도 (${ipBlockRetry}/${IP_BLOCK_MAX_RETRIES})`
                   );
+                  await notifyChat({
+                    category: "blocked_backoff",
+                    severity: "warning",
+                    title: `IP 차단 백오프 진입 (${ipBlockRetry}/${IP_BLOCK_MAX_RETRIES}) — ${Math.round(waitMs / 60000)}분 대기`,
+                    context: {
+                      "검색어": keyword,
+                      "최근 위치": `${city} ${district} ${dong}`,
+                      "세션 ID": this.opts.sessionId,
+                    },
+                  }).catch(() => undefined);
                   await this.recycleBrowser("IP block - waiting").catch(() => {});
-                  await new Promise((r) => setTimeout(r, IP_BLOCK_WAIT_MS));
+                  await new Promise((r) => setTimeout(r, waitMs));
                   continue;
+                }
+
+                if (isStructureAssertError(err)) {
+                  this.consecutiveStructureBroken += 1;
+                  logger.error(
+                    { error: msg },
+                    `🧱 구조 깨짐 의심 (연속 ${this.consecutiveStructureBroken}/${ABORT_STRUCTURE_BROKEN}): ${city} ${district} ${dong}`
+                  );
+                  if (this.consecutiveStructureBroken >= ABORT_STRUCTURE_BROKEN) {
+                    await notifyChat({
+                      category: "structure_broken",
+                      severity: "critical",
+                      title: `구조 깨짐 ${this.consecutiveStructureBroken}회 연속 — 세션 자동 종료`,
+                      context: {
+                        "검색어": keyword,
+                        "최근 위치": `${city} ${district} ${dong}`,
+                        "세션 ID": this.opts.sessionId,
+                        "권장 조치":
+                          "list/detail 셀렉터 또는 search iframe 구조 변경, 혹은 IP 차단 확인. run dump 로그 참고.",
+                      },
+                    }).catch(() => undefined);
+                    throw new Error(
+                      `CRAWL_ABORT: 구조 깨짐 ${this.consecutiveStructureBroken}회 연속 — 세션 종료 (${city} ${district} ${dong})`
+                    );
+                  }
+                  break; // 다음 동으로
                 }
 
                 logger.error(
@@ -437,30 +516,37 @@ export class CrawlSession {
   }
 
   /**
-   * 1페이지에서 0건이 나왔을 때, 그게 "진짜 빈 동"인지 "차단/일시 실패"인지 가린다.
-   *  1) 차단 시그널이 보이면 즉시 IP_BLOCK 으로 승격 → 기존 백오프/재시도/알림 흐름을 탄다.
+   * 1페이지 리스트 수집이 실패(StructureAssertError)했을 때, 그게 "진짜 빈 동"인지
+   * "차단/일시 실패/구조 변경"인지 가린다.
+   *  1) 차단 시그널이 보이면 즉시 IP_BLOCK 으로 승격 → 백오프/재시도/알림 흐름을 탄다.
    *  2) 시그널이 없으면 soft block 또는 일시 로딩 실패일 수 있으니 재검색을 2회까지 시도.
-   *     한 번이라도 항목이 나오면 그걸 반환(빈 동 오판 회피), 끝까지 0건이면 진짜 빈 동.
+   *     - 항목이 나오면 반환(빈 동/구조 오판 회피)
+   *     - collectListItems 가 [] 를 반환하면 '검색 결과 없음' 마커가 확인된 진짜 빈 동
+   *     - 끝까지 StructureAssertError 면 진짜 구조 깨짐으로 보고 throw (run = assert_failed)
    * 이전 버전은 0건을 무조건 "빈 동"으로 처리해 soft block 으로 누락된 데이터를
    * 정상으로 오인했다 — 빨래방 1400건 누락의 핵심 원인.
    */
-  private async recoverEmptyFirstPage(
+  private async recoverList(
     city: string,
     district: string,
     dong: string,
-    keyword: string
+    keyword: string,
+    originalErr: unknown
   ): Promise<ListItem[]> {
-    const { logger } = this.opts;
+    const { logger, recorder } = this.opts;
     if (!this.page) return [];
+    if (recorder) await recorder.screenshot(this.page, "list_failure");
 
     if (await detectIpBlock(this.page)) {
-      logger.warn("🚫 1페이지 0건 + IP 차단 시그널 → 차단 처리");
+      logger.warn("🚫 리스트 수집 실패 + IP 차단 시그널 → 차단 처리");
       throw new Error(`${IP_BLOCK_ERROR}: ${district} ${dong}`);
     }
 
-    const EMPTY_RETRY = 2;
-    for (let r = 1; r <= EMPTY_RETRY; r++) {
-      logger.warn(`🔍 ${city} ${district} ${dong} 1페이지 0건 — 재검색 ${r}/${EMPTY_RETRY}`);
+    const RETRY = 2;
+    for (let r = 1; r <= RETRY; r++) {
+      logger.warn(
+        `🔍 ${city} ${district} ${dong} 리스트 수집 실패 — 재검색 ${r}/${RETRY}`
+      );
       await humanDelay(this.page, 4000, 8000);
       await runSearch(this.page, `${district} ${dong} ${keyword}`, logger);
 
@@ -469,337 +555,386 @@ export class CrawlSession {
         throw new Error(`${IP_BLOCK_ERROR}: ${district} ${dong}`);
       }
 
-      const retried = await collectListItems(this.page, logger);
-      if (retried.length > 0) {
-        logger.info(
-          `✅ 재검색 ${r}회차에서 ${retried.length}건 수집 — 빈 동 오판 회피`
-        );
-        return retried;
+      try {
+        const retried = await collectListItems(this.page, logger);
+        if (retried.length > 0) {
+          logger.info(
+            `✅ 재검색 ${r}회차에서 ${retried.length}건 수집 — 빈 동/구조 오판 회피`
+          );
+          return retried;
+        }
+        // [] = '검색 결과 없음' 마커가 확인된 진짜 빈 동
+        logger.info("🪹 재검색에서 '결과 없음' 마커 확인 — 실제 빈 동");
+        return [];
+      } catch (e) {
+        if (isStructureAssertError(e)) {
+          continue; // 여전히 구조 문제 → 다음 재검색
+        }
+        throw e;
       }
     }
 
-    logger.info("🪹 재검색 후에도 0건 — 실제 빈 동으로 간주");
-    return [];
+    // 재검색을 다 했는데도 구조 문제 → 진짜 구조 깨짐으로 보고 throw
+    if (recorder) await recorder.screenshot(this.page, "list_unrecoverable");
+    throw originalErr instanceof Error
+      ? originalErr
+      : new StructureAssertError("list_unrecoverable");
   }
 
   private async processOne(args: ProcessOneArgs): Promise<void> {
-    const { logger, placesRepo, signal, keyword } = this.opts;
+    const { logger, rawRepo, recorder, signal, keyword } = this.opts;
     const { city, district, dong, resumePage, resumeListIndex } = args;
     if (!this.page) throw new Error("page not initialized");
 
     this.currentPage = 1;
     this.currentListIndex = 0;
     const processedAtStart = this.processed;
+    const category = this.opts.category ?? keyword;
 
-    logger.info(`🎯 ${city} ${district} ${dong} (keyword: ${keyword}) 처리 시작`);
-
-    await runSearch(this.page, `${district} ${dong} ${keyword}`, logger);
-
-    if (await detectIpBlock(this.page)) {
-      logger.warn("🚫 IP 차단 페이지 감지");
-      throw new Error(`${IP_BLOCK_ERROR}: ${district} ${dong}`);
-    }
-
-    let startListIndex = 0;
-    if (resumePage && resumePage > 1) {
-      this.currentPage = resumePage;
-      logger.info(`🔄 페이지 ${resumePage}로 점프 시도`);
-      const moved = await goToSpecificPage(this.page, resumePage, logger);
-      if (!moved) {
-        logger.warn("⚠️ 페이지 점프 실패, 1페이지부터 시작");
-        this.currentPage = 1;
-      } else {
-        startListIndex = resumeListIndex ?? 0;
-      }
-    }
-    this.emitProgress();
-
-    let firstIteration = true;
-    while (!this.stopped) {
-      if (signal.aborted) break;
-
-      let items = await collectListItems(this.page, logger);
-
-      // 1페이지 0건 → 진짜 빈 동인지 차단/일시 실패인지 구분 (차단이면 IP_BLOCK throw)
-      if (items.length === 0 && this.currentPage === 1 && firstIteration) {
-        items = await this.recoverEmptyFirstPage(city, district, dong, keyword);
-      }
-
-      if (items.length === 0) {
-        // 1페이지에서 0건 = iframe 못 찾았거나 selector 깨짐 의심.
-        // 단순히 그 동이 비어있을 수도 있어 즉시 알림은 보내지 않고 카운터만 증가,
-        // 누적 N회면 warning 알림 (cooldown 적용).
-        if (this.currentPage === 1) {
-          this.consecutiveIframeMissing += 1;
-          logger.warn(
-            `No items in page 1 (연속 ${this.consecutiveIframeMissing})`
-          );
-          if (
-            this.consecutiveIframeMissing >= ALERT_IFRAME_MISSING &&
-            !this.alertedIframeMissing
-          ) {
-            this.alertedIframeMissing = true;
-            await notifyChat({
-              category: "iframe_missing",
-              severity: "warning",
-              title: `구조 변화 의심: ${this.consecutiveIframeMissing}개 동 연속 0건 (page 1)`,
-              context: {
-                "검색어": keyword,
-                "최근 위치": `${city} ${district} ${dong}`,
-                "세션 ID": this.opts.sessionId,
-                "권장 조치":
-                  "list selector 또는 search iframe URL 패턴 확인 필요",
-              },
-            }).catch(() => undefined);
-          }
-        } else {
-          logger.warn(`No items in page ${this.currentPage}`);
-        }
-        break;
-      }
-
-      // 1페이지에서 항목 수집 성공 → iframe 카운터만 리셋
-      // alertedIframeMissing 은 세션 끝까지 sticky (중간 회복돼도 추가 알림 X)
-      if (this.currentPage === 1) {
-        this.consecutiveIframeMissing = 0;
-      }
-
-      logger.info(
-        `Page ${this.currentPage}: ${items.length}건 항목, ${
-          firstIteration ? startListIndex : 0
-        } 부터 처리`
+    // run 경계: 동 1개 = 1 run. crawl_runs 에 기록하고 RunRecorder 를 초기화한다.
+    const runId = randomUUID();
+    this.currentRunId = runId;
+    recorder?.reset(runId);
+    recorder?.marker(`dong_start ${city} ${district} ${dong}`);
+    let collected = 0; // 추출 시도 성공 건수
+    let saved = 0; // raw insert 성공 건수
+    let runStarted = false;
+    try {
+      await rawRepo.startRun({
+        runId,
+        sessionId: this.opts.sessionId,
+        keyword,
+        category,
+        host: this.opts.host,
+        slotId: this.opts.slotId,
+        city,
+        district,
+        dong,
+        source: "naver_place",
+      });
+      runStarted = true;
+    } catch (e) {
+      logger.error(
+        `crawl_runs startRun 실패: ${e instanceof Error ? e.message : String(e)}`
       );
+    }
 
-      for (
-        let i = firstIteration ? startListIndex : 0;
-        i < items.length;
-        i++
-      ) {
-        if (signal.aborted || this.stopped) break;
-        this.currentListIndex = i;
-        const item = items[i];
-        if (!item.name || item.name.trim().length === 0) {
-          logger.warn(`Skipping item ${i}: invalid name`);
-          continue;
+    try {
+      logger.info(`🎯 ${city} ${district} ${dong} (keyword: ${keyword}) 처리 시작`);
+
+      await runSearch(this.page, `${district} ${dong} ${keyword}`, logger);
+      // 검색 직후 한 장 — 성공 run 은 finalizeSuccess 에서 버려지고, 실패 시 dump 에 포함.
+      if (recorder) await recorder.screenshot(this.page, "after_search");
+
+      if (await detectIpBlock(this.page)) {
+        logger.warn("🚫 IP 차단 페이지 감지");
+        throw new Error(`${IP_BLOCK_ERROR}: ${district} ${dong}`);
+      }
+
+      let startListIndex = 0;
+      if (resumePage && resumePage > 1) {
+        this.currentPage = resumePage;
+        logger.info(`🔄 페이지 ${resumePage}로 점프 시도`);
+        const moved = await goToSpecificPage(this.page, resumePage, logger);
+        if (!moved) {
+          logger.warn("⚠️ 페이지 점프 실패, 1페이지부터 시작");
+          this.currentPage = 1;
+        } else {
+          startListIndex = resumeListIndex ?? 0;
         }
+      }
+      this.emitProgress();
 
-        // 클릭 전 카테고리 매칭 체크: 검색 키워드와 무관한 업종이면 skip.
-        // 카테고리가 없으면(undefined) 일단 통과시켜 detail 단계로 진행.
-        if (
-          !matchesCategory(
-            keyword,
-            item.category,
-            this.opts.extraCategoryKeywords
-          )
-        ) {
-          logger.info(
-            `🚫 카테고리 미스매치 skip: "${item.name}" [${item.category}] (keyword="${keyword}")`
-          );
-          continue;
-        }
+      let firstIteration = true;
+      while (!this.stopped) {
+        if (signal.aborted) break;
 
+        let items: ListItem[];
         try {
-          const sf = await findSearchFrameByUrl(this.page);
-          if (sf) {
-            const actual = await getCurrentPageNumber(sf, logger);
-            if (actual !== this.currentPage) {
-              logger.warn(
-                `⚠️ page mismatch: ${this.currentPage} → ${actual}, recovering`
-              );
-              const ok = await goToSpecificPage(
-                this.page,
-                this.currentPage,
-                logger
-              );
-              if (!ok) this.currentPage = actual;
-            }
-          }
+          items = await collectListItems(this.page, logger);
         } catch (err) {
-          logger.warn(
-            `page sanity check failed: ${
-              err instanceof Error ? err.message : String(err)
-            }`
-          );
+          // 1페이지 첫 시도의 구조 실패만 복구(재검색) 시도, 그 외엔 그대로 throw → run 실패
+          if (
+            isStructureAssertError(err) &&
+            this.currentPage === 1 &&
+            firstIteration
+          ) {
+            items = await this.recoverList(city, district, dong, keyword, err);
+          } else {
+            throw err;
+          }
         }
 
-        if (!(await clickListItem(this.page, i, logger))) {
-          logger.warn(`⚠️ click failed for ${i}th item`);
-          continue;
+        if (items.length === 0) {
+          // collectListItems/recoverList 가 [] 를 반환 = '검색 결과 없음' 마커가
+          // 확인된 진짜 빈 동(구조/차단 의심이면 throw 되어 여기 안 옴).
+          logger.info(
+            `🪹 빈 동 확인: ${city} ${district} ${dong} (page ${this.currentPage})`
+          );
+          break;
         }
 
-        // 가게 간 사람처럼 보이는 짧은 텀 — 클릭 직후 detail 추출 전에 둔다.
-        await humanDelay(this.page, 700, 1800);
+        logger.info(
+          `Page ${this.currentPage}: ${items.length}건 항목, ${
+            firstIteration ? startListIndex : 0
+          } 부터 처리`
+        );
 
-        try {
-          const detail = await extractDetail(
-            this.page,
-            {
-              city,
-              district,
-              dong,
-              pageNo: this.currentPage,
-              listIndex: i,
-              shopName: item.name,
-              collectMenu: this.opts.collectMenu,
-            },
-            logger
-          );
+        for (
+          let i = firstIteration ? startListIndex : 0;
+          i < items.length;
+          i++
+        ) {
+          if (signal.aborted || this.stopped) break;
+          this.currentListIndex = i;
+          const item = items[i];
+          if (!item.name || item.name.trim().length === 0) {
+            logger.warn(`Skipping item ${i}: invalid name`);
+            continue;
+          }
 
-          // detail 단계 카테고리 매칭 — 리스트에선 카테고리 비어 있어 통과한 항목을
-          // detail의 category_main 으로 한 번 더 검증한다. category_main 도 비어 있으면 통과.
+          // 클릭 전 카테고리 매칭 체크: 검색 키워드와 무관한 업종이면 skip.
+          // 카테고리가 없으면(undefined) 일단 통과시켜 detail 단계로 진행.
           if (
             !matchesCategory(
               keyword,
-              detail.category_main,
+              item.category,
               this.opts.extraCategoryKeywords
             )
           ) {
             logger.info(
-              `🚫 detail 카테고리 미스매치 skip: "${detail.shop_name}" [${detail.category_main}] (keyword="${keyword}")`
+              `🚫 카테고리 미스매치 skip: "${item.name}" [${item.category}] (keyword="${keyword}")`
             );
             continue;
           }
 
-          await placesRepo.upsert({
-            ...detail,
-            naver_search: `${district} ${dong} ${keyword}`,
-          });
-          this.processed += 1;
-          this.consecutiveSaveFailures = 0;
-          this.emitProgress();
-          logger.info(
-            `💾 저장 (#${this.processed}): ${detail.shop_name} · ${
-              detail.address ?? "주소 없음"
-            }`
-          );
-        } catch (err) {
-          const msg = err instanceof Error ? err.message : String(err);
-          this.consecutiveSaveFailures += 1;
-          logger.error(
-            `❌ ${i}번째 item 저장 실패 (연속 ${this.consecutiveSaveFailures}/${MAX_CONSECUTIVE_SAVE_FAILURES}): ${msg}`
-          );
-
-          if (this.consecutiveSaveFailures >= MAX_CONSECUTIVE_SAVE_FAILURES) {
-            // 종료 직전 critical 알림 (await 하되 webhook 실패는 swallow)
-            await notifyChat({
-              category: "save_failures",
-              severity: "critical",
-              title: `저장 ${MAX_CONSECUTIVE_SAVE_FAILURES}회 연속 실패 — 세션 자동 종료`,
-              context: {
-                "검색어": keyword,
-                "위치": `${city} ${district} ${dong}`,
-                "세션 ID": this.opts.sessionId,
-                "마지막 에러": msg,
-              },
-            }).catch(() => undefined);
-            throw new Error(
-              `CRAWL_ABORT: 저장이 ${MAX_CONSECUTIVE_SAVE_FAILURES}회 연속 실패 — 세션 자동 종료 (마지막: ${msg})`
-            );
-          }
-
-          if (isFatalPageError(msg)) {
-            logger.warn("🔄 Fatal error, browser 통째 재시작...");
-            await this.recycleBrowser("fatal during item processing").catch(
-              () => {}
-            );
-            try {
-              if (this.page)
-                await runSearch(
+          try {
+            const sf = await findSearchFrameByUrl(this.page);
+            if (sf) {
+              const actual = await getCurrentPageNumber(sf, logger);
+              if (actual !== this.currentPage) {
+                logger.warn(
+                  `⚠️ page mismatch: ${this.currentPage} → ${actual}, recovering`
+                );
+                const ok = await goToSpecificPage(
                   this.page,
-                  `${district} ${dong} ${keyword}`,
+                  this.currentPage,
                   logger
                 );
-              if (this.page && this.currentPage > 1) {
-                await goToSpecificPage(this.page, this.currentPage, logger);
+                if (!ok) this.currentPage = actual;
               }
-            } catch {
-              /* ignore */
             }
+          } catch (err) {
+            logger.warn(
+              `page sanity check failed: ${
+                err instanceof Error ? err.message : String(err)
+              }`
+            );
+          }
+
+          if (!(await clickListItem(this.page, i, logger))) {
+            logger.warn(`⚠️ click failed for ${i}th item`);
             continue;
           }
+
+          // 가게 간 사람처럼 보이는 짧은 텀 — 클릭 직후 detail 추출 전에 둔다.
+          await humanDelay(this.page, 700, 1800);
+
+          try {
+            const detail = await extractDetail(
+              this.page,
+              {
+                city,
+                district,
+                dong,
+                pageNo: this.currentPage,
+                listIndex: i,
+                shopName: item.name,
+                collectMenu: this.opts.collectMenu,
+              },
+              logger
+            );
+            collected += 1;
+
+            // detail 단계 카테고리 매칭 — 리스트에선 카테고리 비어 있어 통과한 항목을
+            // detail의 category_main 으로 한 번 더 검증한다. category_main 도 비어 있으면 통과.
+            if (
+              !matchesCategory(
+                keyword,
+                detail.category_main,
+                this.opts.extraCategoryKeywords
+              )
+            ) {
+              logger.info(
+                `🚫 detail 카테고리 미스매치 skip: "${detail.shop_name}" [${detail.category_main}] (keyword="${keyword}")`
+              );
+              continue;
+            }
+
+            // v3: 정규화하지 않고 raw 를 append-only 로 적재. place_id 가 없으면
+            // canonical dedup 키가 없으므로 partial 로 표시(canonical 변환에서 제외).
+            await rawRepo.insertRaw({
+              runId,
+              placeId: detail.place_id ?? null,
+              category,
+              source: "naver_place",
+              payload: {
+                ...detail,
+                naver_search: `${district} ${dong} ${keyword}`,
+              },
+              partial: !detail.place_id,
+              scrapedAt: detail.scraped_at,
+            });
+            saved += 1;
+            this.processed += 1;
+            this.consecutiveSaveFailures = 0;
+            this.emitProgress();
+            logger.info(
+              `💾 raw 저장 (#${this.processed}): ${detail.shop_name} · ${
+                detail.address ?? "주소 없음"
+              }${detail.place_id ? "" : " ⚠️place_id 없음(partial)"}`
+            );
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            this.consecutiveSaveFailures += 1;
+            logger.error(
+              `❌ ${i}번째 item 저장 실패 (연속 ${this.consecutiveSaveFailures}/${MAX_CONSECUTIVE_SAVE_FAILURES}): ${msg}`
+            );
+
+            if (this.consecutiveSaveFailures >= MAX_CONSECUTIVE_SAVE_FAILURES) {
+              // 종료 직전 critical 알림 (await 하되 webhook 실패는 swallow)
+              await notifyChat({
+                category: "save_failures",
+                severity: "critical",
+                title: `저장 ${MAX_CONSECUTIVE_SAVE_FAILURES}회 연속 실패 — 세션 자동 종료`,
+                context: {
+                  "검색어": keyword,
+                  "위치": `${city} ${district} ${dong}`,
+                  "세션 ID": this.opts.sessionId,
+                  "마지막 에러": msg,
+                },
+              }).catch(() => undefined);
+              throw new Error(
+                `CRAWL_ABORT: 저장이 ${MAX_CONSECUTIVE_SAVE_FAILURES}회 연속 실패 — 세션 자동 종료 (마지막: ${msg})`
+              );
+            }
+
+            if (isFatalPageError(msg)) {
+              logger.warn("🔄 Fatal error, browser 통째 재시작...");
+              await this.recycleBrowser("fatal during item processing").catch(
+                () => {}
+              );
+              try {
+                if (this.page)
+                  await runSearch(
+                    this.page,
+                    `${district} ${dong} ${keyword}`,
+                    logger
+                  );
+                if (this.page && this.currentPage > 1) {
+                  await goToSpecificPage(this.page, this.currentPage, logger);
+                }
+              } catch {
+                /* ignore */
+              }
+              continue;
+            }
+          }
         }
-      }
 
-      firstIteration = false;
-      if (signal.aborted || this.stopped) break;
+        firstIteration = false;
+        if (signal.aborted || this.stopped) break;
 
-      logger.info(`✅ Page ${this.currentPage} 완료, 다음 페이지로`);
-      this.currentPage += 1;
-      this.currentListIndex = 0;
-      this.emitProgress();
+        logger.info(`✅ Page ${this.currentPage} 완료, 다음 페이지로`);
+        this.currentPage += 1;
+        this.currentListIndex = 0;
+        this.emitProgress();
 
-      const moved = await goToNextPage(this.page, logger);
-      if (!moved) {
-        logger.info("📌 더 이상 페이지가 없음");
-        break;
-      }
-      await humanDelay(this.page, 1500, 3500);
-    }
-
-    const savedInThisDong = this.processed - processedAtStart;
-    if (savedInThisDong === 0) {
-      this.consecutiveEmptyDongs += 1;
-      logger.warn(
-        `🪹 ${city} ${district} ${dong}에서 저장 0건 (연속 빈 동 ${this.consecutiveEmptyDongs})`
-      );
-      // 임계치 도달 + 아직 알림 안 보낸 상태에서만 1회 알림.
-      // 이후 정상 동(저장 1건+) 발견 시 alerted 플래그 reset → 다음 누적 시 다시 알림 가능.
-      if (
-        this.consecutiveEmptyDongs >= ALERT_EMPTY_DONGS &&
-        !this.alertedEmptyDongs
-      ) {
-        this.alertedEmptyDongs = true;
-        await notifyChat({
-          category: "empty_dongs",
-          severity: "warning",
-          title: `차단 의심: ${this.consecutiveEmptyDongs}개 동 연속 저장 0건`,
-          context: {
-            "검색어": keyword,
-            "최근 위치": `${city} ${district} ${dong}`,
-            "세션 ID": this.opts.sessionId,
-            "권장 조치":
-              "이 세션에서는 더 이상 같은 알림 안 옵니다. 정지 후 SlowMo↑ 또는 IP 변경 권장.",
-          },
-        }).catch(() => undefined);
-      }
-    } else {
-      // 정상 동 만나면 카운터는 reset (다음 누적 카운트 표시용)
-      // 다만 alertedEmptyDongs 는 세션 끝까지 sticky — 중간에 회복돼도 추가 알림 X
-      this.consecutiveEmptyDongs = 0;
-    }
-
-    // 동 처리 완료 시점에 "90일 동안 못 본 active 가게" → missing 판정
-    // (lifecycle 컬럼 없는 v1 테이블이면 placesRepo 가 자체적으로 no-op 처리)
-    if (
-      !this.stopped &&
-      !signal.aborted &&
-      placesRepo.markDongMissing &&
-      district &&
-      dong
-    ) {
-      try {
-        const result = await placesRepo.markDongMissing({
-          district,
-          dong,
-          daysThreshold: 90,
-        });
-        if (result.count > 0) {
-          logger.info(
-            `🪦 missing 처리: ${city} ${district} ${dong} ${result.count}건 (90일 이상 미관측)`
-          );
+        const moved = await goToNextPage(this.page, logger);
+        if (!moved) {
+          logger.info("📌 더 이상 페이지가 없음");
+          break;
         }
-      } catch (e) {
+        await humanDelay(this.page, 1500, 3500);
+      }
+
+      const savedInThisDong = this.processed - processedAtStart;
+      if (savedInThisDong === 0) {
+        this.consecutiveEmptyDongs += 1;
         logger.warn(
-          `missing 판정 실패: ${e instanceof Error ? e.message : String(e)}`
+          `🪹 ${city} ${district} ${dong}에서 저장 0건 (연속 빈 동 ${this.consecutiveEmptyDongs})`
         );
+        // 임계치 도달 + 아직 알림 안 보낸 상태에서만 1회 알림.
+        if (
+          this.consecutiveEmptyDongs >= ALERT_EMPTY_DONGS &&
+          !this.alertedEmptyDongs
+        ) {
+          this.alertedEmptyDongs = true;
+          await notifyChat({
+            category: "empty_dongs",
+            severity: "warning",
+            title: `차단 의심: ${this.consecutiveEmptyDongs}개 동 연속 저장 0건`,
+            context: {
+              "검색어": keyword,
+              "최근 위치": `${city} ${district} ${dong}`,
+              "세션 ID": this.opts.sessionId,
+              "권장 조치":
+                "이 세션에서는 더 이상 같은 알림 안 옵니다. 정지 후 SlowMo↑ 또는 IP 변경 권장.",
+            },
+          }).catch(() => undefined);
+        }
+      } else {
+        // 정상 동 만나면 카운터는 reset (다만 alertedEmptyDongs 는 세션 끝까지 sticky)
+        this.consecutiveEmptyDongs = 0;
       }
-    }
 
-    logger.info(
-      this.stopped
-        ? `🛑 중지됨 (${city} ${district} ${dong} page=${this.currentPage}, idx=${this.currentListIndex})`
-        : `✅ ${city} ${district} ${dong} 완료 (이 동에서 ${savedInThisDong}건, 누적 ${this.processed}건)`
-    );
+      // missing 판정은 v3 에선 크롤러가 하지 않는다 — canonical sync 함수가
+      // completed run 커버리지를 근거로 일괄 처리한다(빨래방 누락 재발 방지의 일부).
+
+      logger.info(
+        this.stopped
+          ? `🛑 중지됨 (${city} ${district} ${dong} page=${this.currentPage}, idx=${this.currentListIndex})`
+          : `✅ ${city} ${district} ${dong} 완료 (이 동에서 ${savedInThisDong}건, 누적 ${this.processed}건)`
+      );
+
+      // run 정상 종료
+      if (runStarted) {
+        await rawRepo
+          .finishRun(runId, {
+            status: this.stopped ? "aborted" : "completed",
+            collectedCount: collected,
+            savedCount: saved,
+          })
+          .catch((e) =>
+            logger.warn(
+              `finishRun(completed) 실패: ${e instanceof Error ? e.message : String(e)}`
+            )
+          );
+      }
+      recorder?.finalizeSuccess({ city, district, dong, collected, saved });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      const status: RunStatus = msg.startsWith(`${IP_BLOCK_ERROR}:`)
+        ? "blocked"
+        : msg.startsWith("CRAWL_ABORT:")
+        ? "aborted"
+        : isStructureAssertError(err)
+        ? "assert_failed"
+        : "error";
+      const dump = recorder ? await recorder.finalizeFailure(`${status}: ${msg}`) : null;
+      if (runStarted) {
+        await rawRepo
+          .finishRun(runId, {
+            status,
+            collectedCount: collected,
+            savedCount: saved,
+            error: msg,
+            dumpLocation: dump?.location,
+          })
+          .catch(() => undefined);
+      }
+      throw err;
+    }
   }
 
   async stop(): Promise<void> {

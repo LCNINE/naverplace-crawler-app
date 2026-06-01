@@ -226,65 +226,70 @@ export async function extractDetail(
       ? undefined
       : extractDongFromAddress(address) ||
       addressCandidates.map(extractDongFromAddress).find(Boolean));
-  // 전화번호 추출 (lash_scraper_seoul.js의 성공적인 패턴 사용)
+  // 전화번호 추출
   let phone = "";
 
-  // 1. 먼저 일반적인 전화번호 선택자에서 추출 시도
+  // 1. 상세 진입 시 바로 노출된 번호 (.xlx7Q 에 보이는 경우)
   try {
-    const phoneElement = await f
+    const phoneElement = f
       .locator('a[href^="tel:"], .xlx7Q, .O8qbU.nbXkr .xlx7Q')
       .first();
     if ((await phoneElement.count()) > 0) {
       phone = normalizeText(await phoneElement.textContent());
-      if (phone && phone.trim().length > 0) {
-        log.info(`✅ Phone extracted from standard selector: "${phone}"`);
-      }
+      if (phone) log.info(`✅ Phone extracted from standard selector: "${phone}"`);
     }
   } catch (e) {
     log.debug(
-      `Standard phone extraction failed: ${e instanceof Error ? e.message : String(e)
-      }`
+      `Standard phone extraction failed: ${e instanceof Error ? e.message : String(e)}`
     );
   }
 
-  // 2. 일반 선택자에서 실패하면 wHa0T 클래스 아이콘 클릭 시도 (lash_scraper_seoul.js 패턴)
+  // 2. "전화번호 보기" 버튼을 눌러야 번호가 펼쳐지는 케이스 (화이트365 등 무인/안심번호 매장).
+  //    실제 DOM:  <a class="BfF3H">전화번호 보기 ... <svg class="wHa0T"></a>  ← 클릭 대상
+  //          → 클릭 후  <div class="J7eF_">휴대전화번호 <em>010-6836-7609</em></div>  노출
+  //    svg(aria-hidden) 직접 클릭은 안 먹으므로, svg 를 감싼 a(=BfF3H, "전화번호 보기")를 클릭한다.
   if (!phone || phone.trim().length === 0) {
     try {
-      log.info("⏳ Phone not found, trying wHa0T info icon click...");
-
-      // class="wHa0T" svg 태그 찾기
-      const infoIcon = await f.locator("svg.wHa0T").first();
-      if ((await infoIcon.count()) > 0) {
-        log.info("✅ Info icon found! Clicking...");
-        await infoIcon.click();
-        await page.waitForTimeout(8000); // lash_scraper_seoul.js와 동일한 대기 시간
-
-        // class="J7eF_" div 안의 em 태그에서 전화번호 추출
-        const phoneElement = await f.locator(".J7eF_ em").first();
-        if ((await phoneElement.count()) > 0) {
-          const phoneText = await phoneElement.textContent();
-          if (phoneText) {
-            phone = normalizeText(phoneText);
-            log.info(`📞 Phone extracted from info icon: "${phone}"`);
-          }
-        } else {
-          log.warn("❌ Could not find phone in J7eF_ div em tag");
+      const seeBtn = f
+        .locator(
+          'a:has(svg.wHa0T), a.BfF3H, a[role="button"]:has-text("전화번호 보기")'
+        )
+        .first();
+      if ((await seeBtn.count()) > 0) {
+        // 클릭 후 안심번호 레이어(.J7eF_)가 뜨는 타이밍이 가게/네트워크마다 달라
+        // 고정 대기로는 간헐 실패한다. '번호가 보일 때까지' 명시적으로 대기하고,
+        // 안 뜨면 최대 2회까지 다시 클릭한다.
+        for (
+          let attempt = 0;
+          attempt < 2 && (!phone || phone.trim().length === 0);
+          attempt++
+        ) {
+          await seeBtn.scrollIntoViewIfNeeded().catch(() => undefined);
+          await seeBtn.hover().catch(() => undefined);
+          await seeBtn.click().catch(() => undefined);
+          // 펼쳐진 번호(.J7eF_ em)가 실제로 나타날 때까지 대기 (고정 대기보다 안정적)
+          await f
+            .locator(".J7eF_ em")
+            .first()
+            .waitFor({ state: "visible", timeout: 5000 })
+            .catch(() => undefined);
+          const el = f.locator('.J7eF_ em, .xlx7Q, a[href^="tel:"]').first();
+          if ((await el.count()) > 0) phone = normalizeText(await el.textContent());
         }
-      } else {
-        log.warn("❌ Info icon (wHa0T) not found");
+        if (phone)
+          log.info(`📞 Phone extracted after '전화번호 보기' click: "${phone}"`);
       }
-    } catch (wHa0TError) {
+    } catch (e) {
       log.debug(
-        `wHa0T class processing failed: ${wHa0TError instanceof Error ? wHa0TError.message : String(wHa0TError)
-        }`
+        `'전화번호 보기' 펼치기 실패: ${e instanceof Error ? e.message : String(e)}`
       );
     }
   }
 
-  // 3. 모든 방법이 실패하면 빈 문자열
+  // 3. 그래도 없으면 빈 문자열 (실제로 번호가 없는 매장)
   if (!phone || phone.trim().length === 0) {
     phone = "";
-    log.warn("⚠️ Could not extract phone number from any method");
+    log.warn("⚠️ 전화번호 추출 실패 (번호 없는 매장이거나 구조 변경 가능)");
   }
 
   // 영업시간 추출 (lash_scraper_seoul.js 패턴)

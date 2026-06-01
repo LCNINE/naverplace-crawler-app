@@ -8,6 +8,8 @@ export type NotificationCategory =
   | "save_failures"
   | "empty_dongs"
   | "iframe_missing"
+  | "blocked_backoff"
+  | "structure_broken"
   | "session_fatal"
   | "session_completed"
   | "session_restarted"
@@ -17,6 +19,9 @@ const COOLDOWN_MS: Record<NotificationCategory, number> = {
   save_failures: 5 * 60 * 1000,
   empty_dongs: 30 * 60 * 1000,
   iframe_missing: 30 * 60 * 1000,
+  // 차단 백오프 진입/종료는 매번 사람이 인지해야 하므로 쿨다운 없음
+  blocked_backoff: 0,
+  structure_broken: 5 * 60 * 1000,
   session_fatal: 60 * 1000,
   session_completed: 0,
   session_restarted: 0,

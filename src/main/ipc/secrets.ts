@@ -71,10 +71,10 @@ export function registerSecretsIpc() {
 
     try {
       const client = createClient(secrets.url, secrets.anonKey);
-      // count:'exact'는 server-side COUNT(*)라 큰 테이블에서 매우 느림.
-      // 테이블 존재 + 권한 확인만 필요하므로 limit(1)이면 충분.
+      // v3: 데이터는 raw_places 에 저장되므로 raw_places 존재 + 권한만 확인한다.
+      // (secrets.table 은 이제 실제 테이블이 아니라 category 라벨이라 조회하면 안 됨)
       const probe = async () =>
-        await client.from(secrets.table).select("*").limit(1);
+        await client.from("raw_places").select("id").limit(1);
       const { error } = await withTimeout(probe(), TIMEOUT_MS);
       if (error) {
         return {

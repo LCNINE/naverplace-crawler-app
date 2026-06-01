@@ -5,8 +5,6 @@ const validInvokeChannels = new Set([
   "secrets:load",
   "secrets:clear",
   "crawler:test-connection",
-  "crawler:preflight",
-  "crawler:create-table",
   "crawler:start",
   "crawler:stop",
   "progress:get",

@@ -1,10 +1,18 @@
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
+import { hostname } from "node:os";
 import { CrawlSession } from "./crawler/runner.js";
-import { SupabaseRepo } from "./storage/supabase.repo.js";
+import { SupabaseRawRepo } from "./storage/supabase.raw-repo.js";
+import { RunRecorder, FileDumpSink } from "./crawler/logging/run-recorder.js";
 import { getProgressRepo } from "./storage/progress.repo.js";
 import { createWorkerLogger } from "./logger.js";
 import { config, type WorkerConfig } from "./config.js";
+
+/** cfg.table('coin_laundry_v2') → canonical category('coin_laundry'). */
+function resolveCategory(cfg: WorkerConfig): string {
+  if (cfg.table) return cfg.table.replace(/_v\d+$/i, "");
+  return cfg.keyword;
+}
 
 interface WorkerEntry {
   id: string;
@@ -36,13 +44,15 @@ export class WorkerManager {
     const logger = createWorkerLogger(workerId);
     const progressRepo = getProgressRepo();
 
-    const table = cfg.table ?? config.supabase.table;
-    if (!table) throw new Error(`워커 [${workerId}]: table 미설정. WORKERS에 table 필드를 추가하거나 SUPABASE_TABLE 환경변수를 설정하세요.`);
-
-    const placesRepo = new SupabaseRepo({
+    const category = resolveCategory(cfg);
+    const rawRepo = new SupabaseRawRepo({
       url: config.supabase.url,
       key: config.supabase.anonKey,
-      table,
+    });
+    const recorder = new RunRecorder({
+      runId: "pending",
+      base: logger,
+      dumpSink: new FileDumpSink(config.dataDir),
     });
 
     // persistent context 프로파일을 워커별로 분리
@@ -77,8 +87,11 @@ export class WorkerManager {
       resumeFrom,
       autoRestart: cfg.mode === "all_korea" ? (cfg.autoRestart ?? true) : false,
       userDataDir,
-      placesRepo,
-      logger,
+      rawRepo,
+      category,
+      host: hostname(),
+      recorder,
+      logger: recorder.asLogger(),
       signal: controller.signal,
       onProgress: async (e) => {
         const total = (prev?.processed ?? 0) + e.processed;

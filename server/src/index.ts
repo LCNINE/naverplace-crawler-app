@@ -204,142 +204,28 @@ app.post("/api/workers/:slotId/stop", async (req, res) => {
   res.json({ ok: true });
 });
 
-// ─── 테이블 목록 API ───────────────────────────────────────
-app.get("/api/tables", async (_req, res) => {
-  try {
-    // PostgREST OpenAPI 스펙에서 전체 테이블 목록 추출
-    const r = await fetch(`${config.supabase.url}/rest/v1/`, {
-      headers: {
-        apikey: config.supabase.anonKey,
-        Authorization: `Bearer ${config.supabase.anonKey}`,
-        Accept: "application/openapi+json",
-      },
-    });
-    if (!r.ok) throw new Error(`PostgREST 응답 오류: ${r.status}`);
-    const spec = (await r.json()) as { definitions?: Record<string, unknown> };
-    const allTables = Object.keys(spec.definitions ?? {})
-      .filter((t) => !t.startsWith("rpc/"))
-      .sort();
-
-    // 기존 task에서 사용 중인 테이블을 앞 그룹으로 분리
-    const tasks = await store.getTasks();
-    const usedTables = [...new Set(tasks.map((t) => t.table))].sort();
-    const otherTables = allTables.filter((t) => !usedTables.includes(t));
-
-    res.json({ usedTables, otherTables });
-  } catch {
-    // 실패 시 task store 테이블만 반환
-    const tasks = await store.getTasks();
-    const usedTables = [...new Set(tasks.map((t) => t.table))].sort();
-    res.json({ usedTables, otherTables: [] });
-  }
-});
-
-// ─── 분석 API ──────────────────────────────────────────────
-
-const isV2Table = (table: string) => /_v2$/i.test(table);
-
+// ─── 추출/관측용 클라이언트 (v3: raw_places 기반) ───────────
+// canonical 상시 테이블이 없으므로 분석 조회 UI(/api/analysis/*, /api/tables)는 제거됨.
+// 중복제거·정규화된 추출물은 Supabase 의 extract_latest_places() SQL 함수로 뽑는다.
+//   SELECT * FROM extract_latest_places('coin_laundry');
 async function getAnalysisClient() {
   return createClient(config.supabase.url, config.supabase.anonKey);
 }
 
-async function validateAnalysisTable(tableName: string, res: express.Response): Promise<boolean> {
-  const tasks = await store.getTasks();
-  const allowed = tasks.some((t) => t.table === tableName);
-  if (!allowed) {
-    res.status(403).json({ error: "등록된 작업의 테이블만 조회할 수 있습니다." });
-    return false;
-  }
-  if (!isV2Table(tableName)) {
-    res.status(400).json({ error: "v2_required", message: "v2 테이블(_v2 suffix)에서만 분석이 지원됩니다." });
-    return false;
-  }
-  return true;
-}
-
-app.get("/api/analysis/:table/new-shops", async (req, res) => {
-  if (!(await validateAnalysisTable(req.params.table, res))) return;
-  const ascending = req.query.order === "asc";
-  const since = req.query.since ? new Date(String(req.query.since)).toISOString() : undefined;
-  const until = req.query.until ? new Date(String(req.query.until)).toISOString() : undefined;
-
+// ─── run 관측 API (운영 가시성: 어느 동이 blocked/assert_failed 인지) ──────
+app.get("/api/runs", async (req, res) => {
   const client = await getAnalysisClient();
   let query = client
-    .from(req.params.table)
-    .select("shop_name, place_id, address, phone, category_main, category_sub, city, district, dong, naver_place_url, first_seen_at")
-    .order("first_seen_at", { ascending })
-    .limit(500);
+    .from("crawl_runs")
+    .select(
+      "id, category, keyword, host, slot_id, city, district, dong, status, started_at, finished_at, collected_count, saved_count, error, dump_location"
+    )
+    .order("started_at", { ascending: false })
+    .limit(200);
 
-  if (since) query = query.gte("first_seen_at", since);
-  if (until) query = query.lte("first_seen_at", until);
-  if (req.query.keyword) query = query.ilike("naver_search", `%${req.query.keyword}%`);
-
-  const { data, error } = await query;
-  if (error) { res.status(500).json({ error: error.message }); return; }
-  res.json({ data });
-});
-
-app.get("/api/analysis/:table/missing-shops", async (req, res) => {
-  if (!(await validateAnalysisTable(req.params.table, res))) return;
-  const ascending = req.query.order === "asc";
-  const since = req.query.since ? new Date(String(req.query.since)).toISOString() : undefined;
-  const until = req.query.until ? new Date(String(req.query.until)).toISOString() : undefined;
-
-  const client = await getAnalysisClient();
-  let query = client
-    .from(req.params.table)
-    .select("shop_name, place_id, address, phone, category_main, category_sub, city, district, dong, naver_place_url, missing_at, last_seen_at")
-    .eq("status", "missing")
-    .order("missing_at", { ascending })
-    .limit(500);
-
-  if (since) query = query.gte("missing_at", since);
-  if (until) query = query.lte("missing_at", until);
-  if (req.query.keyword) query = query.ilike("naver_search", `%${req.query.keyword}%`);
-
-  const { data, error } = await query;
-  if (error) { res.status(500).json({ error: error.message }); return; }
-  res.json({ data });
-});
-
-app.get("/api/analysis/:table/events", async (req, res) => {
-  if (!(await validateAnalysisTable(req.params.table, res))) return;
-  const ascending = req.query.order === "asc";
-  const since = req.query.since ? new Date(String(req.query.since)).toISOString() : undefined;
-  const until = req.query.until ? new Date(String(req.query.until)).toISOString() : undefined;
-
-  const client = await getAnalysisClient();
-  let query = client
-    .from("shop_events")
-    .select("*")
-    .eq("table_name", req.params.table)
-    .order("occurred_at", { ascending })
-    .limit(500);
-
-  if (since) query = query.gte("occurred_at", since);
-  if (until) query = query.lte("occurred_at", until);
-  if (req.query.event_type) query = query.eq("event_type", String(req.query.event_type));
-
-  const { data, error } = await query;
-  if (error) { res.status(500).json({ error: error.message }); return; }
-  res.json({ data });
-});
-
-app.get("/api/analysis/:table/all-shops", async (req, res) => {
-  if (!(await validateAnalysisTable(req.params.table, res))) return;
-  const ascending = req.query.order === "asc";
-  const since = req.query.since ? new Date(String(req.query.since)).toISOString() : undefined;
-  const until = req.query.until ? new Date(String(req.query.until)).toISOString() : undefined;
-
-  const client = await getAnalysisClient();
-  let query = client
-    .from(req.params.table)
-    .select("shop_name, place_id, category_main, category_sub, city, district, dong, phone, address, status, first_seen_at, last_seen_at")
-    .order("first_seen_at", { ascending })
-    .limit(500);
-
-  if (since) query = query.gte("first_seen_at", since);
-  if (until) query = query.lte("first_seen_at", until);
+  if (req.query.category) query = query.eq("category", String(req.query.category));
+  if (req.query.status) query = query.eq("status", String(req.query.status));
+  if (req.query.session_id) query = query.eq("session_id", String(req.query.session_id));
 
   const { data, error } = await query;
   if (error) { res.status(500).json({ error: error.message }); return; }

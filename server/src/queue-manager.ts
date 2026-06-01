@@ -1,13 +1,24 @@
 import { join } from "node:path";
+import { hostname } from "node:os";
 import { CrawlSession } from "./crawler/runner.js";
-import { SupabaseRepo } from "./storage/supabase.repo.js";
+import { SupabaseRawRepo } from "./storage/supabase.raw-repo.js";
+import { RunRecorder, FileDumpSink } from "./crawler/logging/run-recorder.js";
 import { getProgressRepo } from "./storage/progress.repo.js";
 import { getTaskStore } from "./task-store.js";
 import { createWorkerLogger } from "./logger.js";
 import { config } from "./config.js";
 import type { Task, SlotInfo } from "./types.js";
 
-const MAX_SLOTS = 3;
+// 같은 공유기 IP 에서 노트북 여러 대가 각자 N 슬롯이면 IP당 동시 요청이 곱연산으로
+// 폭증해 차단을 부른다. 프록시 없이 노트북 운영하므로 기본 1, env(MAX_SLOTS)로 조정.
+const MAX_SLOTS = Math.max(1, parseInt(process.env.MAX_SLOTS ?? "1", 10) || 1);
+
+/** task.table('coin_laundry_v2') → canonical category('coin_laundry'). task.category 우선. */
+function resolveCategory(task: Task): string {
+  if (task.category && task.category.trim()) return task.category.trim();
+  if (task.table) return task.table.replace(/_v\d+$/i, "");
+  return task.keyword;
+}
 
 interface RunningEntry {
   slotId: number;
@@ -119,18 +130,21 @@ export class QueueManager {
   private async assignTaskToSlot(task: Task, slotId: number): Promise<void> {
     const store = getTaskStore();
     const progressRepo = getProgressRepo();
-    const logger = createWorkerLogger(`slot${slotId}_${task.keyword}`);
+    // baseLogger: 슬롯 레벨(시작/완료/오류) 실시간 로그.
+    const baseLogger = createWorkerLogger(`slot${slotId}_${task.keyword}`);
+    const category = resolveCategory(task);
 
-    const table = task.table ?? config.supabase.table;
-    if (!table) {
-      logger.error(`슬롯[${slotId}]: table 미설정`);
-      return;
-    }
-
-    const placesRepo = new SupabaseRepo({
+    // v3: 정규화 없이 raw_places 에 append-only 적재. 테이블명은 고정이라 받지 않는다.
+    const rawRepo = new SupabaseRawRepo({
       url: config.supabase.url,
       key: config.supabase.anonKey,
-      table,
+    });
+
+    // 메모리버퍼 Logger — 크롤 내부 로그/스크린샷을 동(run) 단위로 모아두다 실패 시 dump.
+    const recorder = new RunRecorder({
+      runId: "pending",
+      base: baseLogger,
+      dumpSink: new FileDumpSink(config.dataDir),
     });
 
     const userDataDir = join(config.dataDir, `playwright-profile-${task.id.slice(0, 8)}`);
@@ -158,8 +172,13 @@ export class QueueManager {
       resumeFrom,
       autoRestart: false,
       userDataDir,
-      placesRepo,
-      logger,
+      rawRepo,
+      category,
+      host: hostname(),
+      slotId,
+      recorder,
+      // 크롤 내부 로그는 RunRecorder 를 경유(메모리 버퍼 + 콘솔 실시간)
+      logger: recorder.asLogger(),
       signal: controller.signal,
       onProgress: async (e) => {
         const entry = this.slots.get(slotId);
@@ -216,21 +235,21 @@ export class QueueManager {
       lastError: undefined,
     });
 
-    logger.info(`🚀 슬롯[${slotId}] 작업 시작: [${task.keyword}] resume=${!!resumeFrom}`);
+    baseLogger.info(`🚀 슬롯[${slotId}] 작업 시작: [${task.keyword}] (category=${category}) resume=${!!resumeFrom}`);
 
     session
       .start()
       .then(async () => {
         const stoppedByUser = controller.signal.aborted;
         if (!stoppedByUser) {
-          logger.info(`✅ 슬롯[${slotId}] 작업 완료: [${task.keyword}]`);
+          baseLogger.info(`✅ 슬롯[${slotId}] 작업 완료: [${task.keyword}]`);
           this.slots.delete(slotId);
           await this.onTaskCompleted(task.id);
         }
       })
       .catch(async (err) => {
         const msg = err instanceof Error ? err.message : String(err);
-        logger.error(`❌ 슬롯[${slotId}] 작업 오류: [${task.keyword}] ${msg}`);
+        baseLogger.error(`❌ 슬롯[${slotId}] 작업 오류: [${task.keyword}] ${msg}`);
         this.slots.delete(slotId);
         if (!controller.signal.aborted) {
           await this.onTaskError(task.id, msg);

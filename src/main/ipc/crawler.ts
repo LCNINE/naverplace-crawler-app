@@ -1,15 +1,11 @@
-import { ipcMain, BrowserWindow, powerSaveBlocker } from "electron";
+import { ipcMain, BrowserWindow, powerSaveBlocker, app } from "electron";
 import { z } from "zod";
-import { createClient } from "../storage/supabase-client.js";
 import { randomUUID } from "node:crypto";
+import { hostname } from "node:os";
 import { loadFullSecrets } from "../secrets.js";
 import { getProgressRepo } from "../storage/progress.repo.js";
-import { SupabaseRepo } from "../storage/supabase.repo.js";
-import {
-  tableExists,
-  tryCreateTable,
-  getCreateTableSQL,
-} from "../storage/schema.js";
+import { SupabaseRawRepo } from "../storage/supabase.raw-repo.js";
+import { RunRecorder, FileDumpSink } from "../crawler/logging/run-recorder.js";
 import { CrawlSession } from "../crawler/runner.js";
 import { createLogger } from "../logger.js";
 import { notifyChat } from "../notifier.js";
@@ -52,40 +48,8 @@ function broadcast(window: BrowserWindow, channel: string, payload: unknown) {
 }
 
 export function registerCrawlerIpc(mainWindow: BrowserWindow) {
-  ipcMain.handle("crawler:preflight", async (_e, raw) => {
-    const parsed = z.object({ table: z.string().min(1) }).parse(raw);
-    const secrets = await loadFullSecrets();
-    if (!secrets) throw new Error("자격증명이 없습니다.");
-    const client = createClient(secrets.url, secrets.anonKey);
-    try {
-      const exists = await tableExists(client, parsed.table);
-      return { tableExists: exists };
-    } catch (e) {
-      return {
-        tableExists: false,
-        error: e instanceof Error ? e.message : String(e),
-      };
-    }
-  });
-
-  ipcMain.handle("crawler:create-table", async (_e, raw) => {
-    const parsed = z
-      .object({ table: z.string().min(1), useServiceKey: z.boolean() })
-      .parse(raw);
-    const secrets = await loadFullSecrets();
-    if (!secrets) throw new Error("자격증명이 없습니다.");
-    const sql = getCreateTableSQL(parsed.table);
-    if (parsed.useServiceKey && secrets.serviceKey) {
-      const result = await tryCreateTable(
-        secrets.url,
-        secrets.serviceKey,
-        parsed.table
-      );
-      if (result.ok) return { ok: true };
-      return { ok: false, sql, error: result.error };
-    }
-    return { ok: false, sql };
-  });
+  // v3 Data Lake: 데이터는 raw_places 에 적재되므로 업종별 테이블 존재확인/생성
+  // (crawler:preflight / crawler:create-table)은 더 이상 필요 없어 제거됨.
 
   ipcMain.handle("crawler:start", async (_e, raw) => {
     const parsed = StartSchema.parse(raw) as CrawlStartPayload;
@@ -146,10 +110,20 @@ export function registerCrawlerIpc(mainWindow: BrowserWindow) {
 
     const controller = new AbortController();
     const logger = createLogger();
-    const placesRepo = new SupabaseRepo({
+    // v3: 정규화 없이 raw_places 에 append-only 적재.
+    const rawRepo = new SupabaseRawRepo({
       url: secrets.url,
       key: secrets.anonKey,
-      table: secrets.table,
+    });
+    // canonical category — secrets.table('coin_laundry_v2') → 'coin_laundry'
+    const category = secrets.table
+      ? secrets.table.replace(/_v\d+$/i, "")
+      : parsed.keyword;
+    // 메모리버퍼 Logger — 동(run) 단위 로그/스크린샷을 모아두다 실패 시 dump.
+    const recorder = new RunRecorder({
+      runId: "pending",
+      base: logger,
+      dumpSink: new FileDumpSink(app.getPath("userData")),
     });
 
     const blockerId = powerSaveBlocker.start("prevent-display-sleep");
@@ -168,8 +142,11 @@ export function registerCrawlerIpc(mainWindow: BrowserWindow) {
       extraCategoryKeywords: parsed.extraCategoryKeywords,
       resumeFrom,
       autoRestart: parsed.mode === "all_korea" ? (parsed.autoRestart ?? false) : false,
-      placesRepo,
-      logger,
+      rawRepo,
+      category,
+      host: hostname(),
+      recorder,
+      logger: recorder.asLogger(),
       signal: controller.signal,
       onProgress: async (e) => {
         const total = baseProcessed + e.processed;
